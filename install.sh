@@ -45,7 +45,6 @@ show_info() {
         return
     fi
     
-    # 提取配置
     TK=$(grep -Po '(?<=^token = ).*' "$CONF_FILE" | tr -d '\r ' )
     PT=$(grep -Po '(?<=^port = ).*' "$CONF_FILE" | tr -d '\r ' )
     CT=$(grep -Po '(?<=^cert_path = ).*' "$CONF_FILE" | tr -d '\r ' )
@@ -71,13 +70,13 @@ show_info() {
     echo -e "${BLUE}----------------------------------------------------------------${PLAIN}"
     echo -e "  ${BLUE}📂 关键位置:${PLAIN}"
     echo -e "  - 节点配置文件: ${YELLOW}nano $CONF_FILE${PLAIN}"
-    echo -e "  - 订阅文件目录: /var/www/subscribe"
+    echo -e "  - 订阅发布目录: /var/www/subscribe"
     echo -e "  - Nginx 配置文件: /etc/nginx/sites-available/subscribe"
     echo -e "${BLUE}----------------------------------------------------------------${PLAIN}"
     echo -e "  ${BLUE}💡 使用提示:${PLAIN}"
-    echo -e "  1. 请编辑上述 ${YELLOW}config.ini${PLAIN}，在 ${YELLOW}[nodes]${PLAIN} 下方粘贴链接。"
-    echo -e "  2. 粘贴并保存后，系统会毫秒级自动更新订阅内容。"
-    echo -e "  3. 若无法访问，请检查云服务商安全组是否放行了 ${RED}${PT}${PLAIN} 端口。"
+    echo -e "  1. 请使用 ${YELLOW}nano $CONF_FILE${PLAIN} 在 ${YELLOW}[nodes]${PLAIN} 下方粘贴链接。"
+    echo -e "  2. 每一行代表一个节点，保存后订阅链接内容会即时更新。"
+    echo -e "  3. 记得在防火墙放行 TCP 端口: ${RED}${PT}${PLAIN}"
     echo -e "${BLUE}================================================================${PLAIN}\n"
 }
 
@@ -110,7 +109,7 @@ install_sub() {
         fi
     fi
 
-    # 写入配置
+    # 写入配置 (增加节点范例)
     cat << EOF > $CONF_FILE
 [settings]
 domain = $user_domain
@@ -120,7 +119,10 @@ cert_path = $user_cert
 key_path = $user_key
 
 [nodes]
-# 在下方粘贴节点链接，一行一个
+# 请在下方粘贴您的链接，一行一个，例如：
+# vless://uuid@domain:port?security=tls&sni=sni#备注
+# vmess://base64_string
+# trojan://password@domain:port#备注
 EOF
 
     # 写入 Nginx 生成器
