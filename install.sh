@@ -37,6 +37,33 @@ find_xui_cert() {
     echo "$f_cert|$f_key"
 }
 
+# --- 功能：信息查看 ---
+show_info() {
+    if [ ! -f "$CONF_FILE" ]; then 
+        echo -e "${RED}未检测到安装配置！${PLAIN}"
+        return
+    fi
+    
+    # 解析配置
+    TK=$(grep -Po '(?<=^token = ).*' "$CONF_FILE" | tr -d '\r ')
+    PT=$(grep -Po '(?<=^port = ).*' "$CONF_FILE" | tr -d '\r ')
+    CT=$(grep -Po '(?<=^cert_path = ).*' "$CONF_FILE" | tr -d '\r ')
+    DOM=$(grep -Po '(?<=^domain = ).*' "$CONF_FILE" | tr -d '\r ')
+    
+    # 如果没填域名，就抓取外网 IP
+    [[ -z "$DOM" ] ] && ADDR=$(curl -s ifconfig.me) || ADDR=$DOM
+    # 判断协议
+    [[ -z "$CT" ]] && SCH="http" || SCH="https"
+    
+    echo -e "\n${GREEN}========================================${PLAIN}"
+    echo -e "${GREEN}    订阅管理信息 (已生效) ${PLAIN}"
+    echo -e "订阅地址: ${YELLOW}${SCH}://${ADDR}:${PT}/${TK}${PLAIN}"
+    echo -e "配置文件: ${YELLOW}nano $CONF_FILE${PLAIN}"
+    echo -e "服务状态: $(systemctl is-active subscribe)"
+    echo -e "${GREEN}========================================${PLAIN}"
+    echo -e "${YELLOW}提示：请编辑配置文件并在 [nodes] 下方添加节点链接后即可使用。${PLAIN}\n"
+}
+
 # --- 功能：安装 ---
 install_sub() {
     echo -e "${GREEN}正在安装基础环境 (Nginx/inotify)...${PLAIN}"
@@ -47,52 +74,64 @@ install_sub() {
     # 证书识别
     IFS='|' read -r AUTO_CERT AUTO_KEY <<< "$(find_xui_cert)"
     
-    echo -e "\n${YELLOW}--- 基础配置 ---${PLAIN}"
-    read -p "1. 设置订阅安全Token (建议长乱码): " user_token
+    echo -e "\n${YELLOW}--- 配置向导 ---${PLAIN}"
+    read -p "1. 输入您的解析域名 (直接回车则使用IP): " user_domain
+    read -p "2. 设置订阅安全Token (建议长乱码): " user_token
     user_token=${user_token:-sub$(date +%s)}
-    read -p "2. 设置订阅端口 (默认 8080): " user_port
+    read -p "3. 设置订阅端口 (默认 8080): " user_port
     user_port=${user_port:-8080}
     
     if [ ! -z "$AUTO_CERT" ]; then
         echo -e "${GREEN}检测到 x-ui 域名证书: $AUTO_CERT${PLAIN}"
         read -p "是否引用此证书启用 HTTPS? (y/n, 默认y): " use_ssl
-        [[ "$use_ssl" != "n" ]] && user_cert=$AUTO_CERT && user_key=$AUTO_KEY
+        if [[ "$use_ssl" != "n" ]]; then
+            user_cert=$AUTO_CERT
+            user_key=$AUTO_KEY
+        fi
     fi
 
     # 写入 config.ini
     cat << EOF > $CONF_FILE
 [settings]
+domain = $user_domain
 token = $user_token
 port = $user_port
 cert_path = $user_cert
 key_path = $user_key
 
 [nodes]
-# 粘贴链接到此处
+# 粘贴链接到此处 (一行一个)
 EOF
 
     # 写入 Nginx 生成器
     cat << 'EOF' > $CONF_DIR/nginx_gen.sh
 #!/bin/bash
 INI="/opt/subscribe/config.ini"
-PORT=$(grep -Po '(?<=^port = ).*' "$INI")
-CERT=$(grep -Po '(?<=^cert_path = ).*' "$INI")
-KEY=$(grep -Po '(?<=^key_path = ).*' "$INI")
+PORT=$(grep -Po '(?<=^port = ).*' "$INI" | tr -d '\r ')
+CERT=$(grep -Po '(?<=^cert_path = ).*' "$INI" | tr -d '\r ')
+KEY=$(grep -Po '(?<=^key_path = ).*' "$INI" | tr -d '\r ')
+DOM=$(grep -Po '(?<=^domain = ).*' "$INI" | tr -d '\r ')
+[[ -z "$DOM" ]] && DOM="_"
+
 if [[ -f "$CERT" && -f "$KEY" ]]; then
     SSL="listen $PORT ssl; ssl_certificate $CERT; ssl_certificate_key $KEY; ssl_protocols TLSv1.2 TLSv1.3;"
 else
     SSL="listen $PORT;"
 fi
+
 cat << N_EOF > /etc/nginx/sites-available/subscribe
 server {
     $SSL
-    server_name _;
+    server_name $DOM;
     root /var/www/subscribe;
     location = / { return 403; }
-    location ~ ^/([a-zA-Z0-9_-]+)$ { default_type text/plain; try_files /\$1 =404; add_header Access-Control-Allow-Origin *; }
+    location ~ ^/([a-zA-Z0-9_-]+)$ { 
+        default_type text/plain; 
+        try_files /\$1 =404; 
+        add_header Access-Control-Allow-Origin *; 
+    }
 }
 N_EOF
-chmod 755 /root
 systemctl restart nginx
 EOF
     chmod +x $CONF_DIR/nginx_gen.sh
@@ -106,9 +145,11 @@ update() {
     bash /opt/subscribe/nginx_gen.sh
     TK=$(grep -Po '(?<=^token = ).*' "$INI" | tr -d '\r ')
     ND=$(sed -n '/\[nodes\]/,$p' "$INI" | grep -v '\[nodes\]' | grep -v '^#' | grep -v '^[[:space:]]*$')
-    if [ ! -z "$TK" ] && [ ! -z "$ND" ]; then
+    if [ ! -z "$TK" ]; then
         rm -rf "$ROOT"/*
-        echo "$ND" | base64 -w 0 > "$ROOT/$TK"
+        if [ ! -z "$ND" ]; then
+            echo "$ND" | base64 -w 0 > "$ROOT/$TK"
+        fi
     fi
 }
 update
@@ -121,10 +162,12 @@ EOF
 [Unit]
 Description=Subscribe Service
 After=network.target nginx.service
+
 [Service]
 ExecStart=/bin/bash /opt/subscribe/update.sh
 Restart=always
 User=root
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -133,23 +176,12 @@ EOF
     systemctl enable --now subscribe
     ln -sf /etc/nginx/sites-available/subscribe /etc/nginx/sites-enabled/
     rm -f /etc/nginx/sites-enabled/default
+    
+    # 最终生效
     bash $CONF_DIR/nginx_gen.sh
-
-    echo -e "${GREEN}安装成功！请使用菜单项 2 查看详细地址。${PLAIN}"
-}
-
-# --- 功能：信息查看 ---
-show_info() {
-    if [ ! -f "$CONF_FILE" ]; then echo -e "${RED}未检测到安装！${PLAIN}"; return; fi
-    TK=$(grep -Po '(?<=^token = ).*' "$CONF_FILE")
-    PT=$(grep -Po '(?<=^port = ).*' "$CONF_FILE")
-    CT=$(grep -Po '(?<=^cert_path = ).*' "$CONF_FILE")
-    IP=$(curl -s ifconfig.me)
-    [[ -z "$CT" ]] && SCH="http" || SCH="https"
-    echo -e "\n${GREEN}=== 订阅管理信息 ===${PLAIN}"
-    echo -e "订阅地址: ${YELLOW}${SCH}://${IP}:${PT}/${TK}${PLAIN}"
-    echo -e "配置文件: ${YELLOW}nano $CONF_FILE${PLAIN}"
-    echo -e "服务状态: $(systemctl is-active subscribe)"
+    
+    echo -e "${GREEN}安装成功！${PLAIN}"
+    show_info
 }
 
 # --- 功能：卸载 ---
