@@ -15,21 +15,24 @@ WEB_ROOT="/var/www/subscribe"
 # 检查 root
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误：${PLAIN}必须使用 root 用户运行！" && exit 1
 
-# --- 核心逻辑：智能证书识别 ---
+# --- 核心逻辑：智能证书与私钥自动配对 ---
 find_xui_cert() {
     local cert_dir="/root/cert"
     local f_cert="" f_key=""
     if [ -d "$cert_dir" ]; then
-        for cert in $(find "$cert_dir" -name "*.crt" -o -name "*.pem" -o -name "fullchain.cer" | head -n 5); do
+        # 搜索常见的证书后缀
+        for cert in $(find "$cert_dir" -type f \( -name "*.crt" -o -name "*.pem" -o -name "fullchain.cer" \) | head -n 10); do
+            # 排除自签名证书，只找有有效域名（CN）的
             issuer=$(openssl x509 -noout -issuer -in "$cert" 2>/dev/null)
             subject=$(openssl x509 -noout -subject -in "$cert" 2>/dev/null)
             if [[ "$issuer" != "$subject" ]]; then
-                cn=$(openssl x509 -noout -subject -in "$cert" | sed -n 's/.*CN = //p')
-                if [[ "$cn" =~ [a-zA-Z] ]]; then
+                # 尝试在同目录下寻找私钥
+                d_path=$(dirname "$cert")
+                # 查找同目录下以 .key 结尾，或者包含 key 字符串的 pem 文件
+                f_key=$(find "$d_path" -type f \( -name "*.key" -o -name "*key.pem" -o -name "privkey.pem" \) | head -n 1)
+                
+                if [[ -n "$f_key" ]]; then
                     f_cert="$cert"
-                    base=$(echo "$cert" | sed 's/\.[^.]*$//')
-                    [[ -f "${base}.key" ]] && f_key="${base}.key"
-                    [[ -f "/root/cert/private.key" && -z "$f_key" ]] && f_key="/root/cert/private.key"
                     break
                 fi
             fi
@@ -38,7 +41,7 @@ find_xui_cert() {
     echo "$f_cert|$f_key"
 }
 
-# --- 功能：信息查看 (豪华版) ---
+# --- 功能：信息查看 ---
 show_info() {
     if [ ! -f "$CONF_FILE" ]; then 
         echo -e "${RED}未检测到安装配置！请先运行安装选项。${PLAIN}"
@@ -71,7 +74,6 @@ show_info() {
     echo -e "  ${BLUE}📂 关键位置:${PLAIN}"
     echo -e "  - 节点配置文件: ${YELLOW}nano $CONF_FILE${PLAIN}"
     echo -e "  - 订阅发布目录: /var/www/subscribe"
-    echo -e "  - Nginx 配置文件: /etc/nginx/sites-available/subscribe"
     echo -e "${BLUE}----------------------------------------------------------------${PLAIN}"
     echo -e "  ${BLUE}💡 使用提示:${PLAIN}"
     echo -e "  1. 请使用 ${YELLOW}nano $CONF_FILE${PLAIN} 在 ${YELLOW}[nodes]${PLAIN} 下方粘贴链接。"
@@ -86,13 +88,16 @@ install_sub() {
     apt update && apt install -y nginx inotify-tools grep sed openssl curl
     
     mkdir -p $CONF_DIR $WEB_ROOT
+    
+    # 自动搜寻证书和私钥对
+    echo -e "${YELLOW}正在自动检测域名证书与私钥...${PLAIN}"
     IFS='|' read -r AUTO_CERT AUTO_KEY <<< "$(find_xui_cert)"
     
     echo -e "\n${BLUE}┌────────────────────────────────────────────────────────┐${PLAIN}"
     echo -e "${BLUE}│${PLAIN}                ${YELLOW}欢迎使用订阅一键安装向导${PLAIN}                ${BLUE}│${PLAIN}"
     echo -e "${BLUE}└────────────────────────────────────────────────────────┘${PLAIN}"
 
-    read -p "  1. 请输入解析域名 (留空则默认使用IP): " user_domain
+    read -p "  1. 请输入解析域名 (建议填, 留空用IP): " user_domain
     read -p "  2. 请设置安全Token (直接回车随机生成): " user_token
     user_token=${user_token:-sub$(date +%s)}
     read -p "  3. 请设置订阅端口 (默认 8080): " user_port
@@ -100,16 +105,20 @@ install_sub() {
     
     local user_cert=""
     local user_key=""
-    if [ -n "$AUTO_CERT" ]; then
-        echo -e "\n${GREEN}  ✨ 发现 x-ui 证书:${PLAIN} $AUTO_CERT"
-        read -p "     是否引用此证书启用 HTTPS 加密? (y/n, 默认y): " use_ssl
+    if [[ -n "$AUTO_CERT" && -n "$AUTO_KEY" ]]; then
+        echo -e "\n${GREEN}  ✨ 自动匹配成功!${PLAIN}"
+        echo -e "     证书: $AUTO_CERT"
+        echo -e "     私钥: $AUTO_KEY"
+        read -p "     是否引用此对证书开启 HTTPS? (y/n, 默认y): " use_ssl
         if [ "$use_ssl" != "n" ]; then
             user_cert="$AUTO_CERT"
             user_key="$AUTO_KEY"
         fi
+    else
+        echo -e "\n${YELLOW}  ⚠️ 未发现匹配的证书对，将降级使用 HTTP 模式。${PLAIN}"
     fi
 
-    # 写入配置 (增加节点范例)
+    # 写入配置
     cat << EOF > $CONF_FILE
 [settings]
 domain = $user_domain
@@ -121,11 +130,9 @@ key_path = $user_key
 [nodes]
 # 请在下方粘贴您的链接，一行一个，例如：
 # vless://uuid@domain:port?security=tls&sni=sni#备注
-# vmess://base64_string
-# trojan://password@domain:port#备注
 EOF
 
-    # 写入 Nginx 生成器
+    # 写入 Nginx 生成器 (强化 SSL 配置)
     cat << 'EOF' > $CONF_DIR/nginx_gen.sh
 #!/bin/bash
 INI="/opt/subscribe/config.ini"
@@ -135,7 +142,7 @@ KEY=$(grep -Po '(?<=^key_path = ).*' "$INI" | tr -d '\r ')
 DOM=$(grep -Po '(?<=^domain = ).*' "$INI" | tr -d '\r ')
 [ -z "$DOM" ] && DOM="_"
 if [ -f "$CERT" ] && [ -f "$KEY" ]; then
-    SSL="listen $PORT ssl; ssl_certificate $CERT; ssl_certificate_key $KEY; ssl_protocols TLSv1.2 TLSv1.3;"
+    SSL="listen $PORT ssl; ssl_certificate $CERT; ssl_certificate_key $KEY; ssl_protocols TLSv1.2 TLSv1.3; ssl_ciphers HIGH:!aNULL:!MD5;"
 else
     SSL="listen $PORT;"
 fi
@@ -198,12 +205,11 @@ EOF
     rm -f /etc/nginx/sites-enabled/default
     bash $CONF_DIR/nginx_gen.sh
     
-    echo -e "\n${GREEN}🎉 系统安装成功! 后台服务已启动。${PLAIN}"
+    echo -e "\n${GREEN}🎉 系统安装成功!${PLAIN}"
     show_info
 }
 
 uninstall_sub() {
-    echo -e "${YELLOW}正在清理系统资源...${PLAIN}"
     systemctl stop subscribe 2>/dev/null
     systemctl disable subscribe 2>/dev/null
     rm -rf /etc/systemd/system/subscribe.service $CONF_DIR $WEB_ROOT /etc/nginx/sites-enabled/subscribe /etc/nginx/sites-available/subscribe
@@ -211,16 +217,8 @@ uninstall_sub() {
     echo -e "${GREEN}卸载完成。${PLAIN}"
 }
 
-# --- 菜单界面 ---
 clear
-echo -e "${BLUE}################################################${PLAIN}"
-echo -e "${BLUE}#${PLAIN}          ${GREEN}V2Ray/X-UI 订阅一键管理脚本${PLAIN}         ${BLUE}#${PLAIN}"
-echo -e "${BLUE}################################################${PLAIN}"
-echo -e "  ${YELLOW}1.${PLAIN}  安装/更新系统"
-echo -e "  ${YELLOW}2.${PLAIN}  ${BLUE}查看当前订阅信息${PLAIN}"
-echo -e "  ${YELLOW}3.${PLAIN}  卸载系统"
-echo -e "  ${YELLOW}0.${PLAIN}  退出"
-echo -e "${BLUE}------------------------------------------------${PLAIN}"
+echo -e "  1. 安装/更新系统\n  2. 查看订阅信息\n  3. 卸载系统\n  0. 退出"
 read -p " 请输入数字 [0-3]: " opt
 case $opt in
     1) install_sub ;;
