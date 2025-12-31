@@ -44,27 +44,29 @@ show_info() {
         return
     fi
     
-    # 解析配置，去除可能存在的空格和换行符
-    TK=$(grep -Po '(?<=^token = ).*' "$CONF_FILE" | tr -d '\r ' || echo "")
-    PT=$(grep -Po '(?<=^port = ).*' "$CONF_FILE" | tr -d '\r ' || echo "8080")
-    CT=$(grep -Po '(?<=^cert_path = ).*' "$CONF_FILE" | tr -d '\r ' || echo "")
-    DOM=$(grep -Po '(?<=^domain = ).*' "$CONF_FILE" | tr -d '\r ' || echo "")
+    TK=$(grep -Po '(?<=^token = ).*' "$CONF_FILE" | tr -d '\r ' )
+    PT=$(grep -Po '(?<=^port = ).*' "$CONF_FILE" | tr -d '\r ' )
+    CT=$(grep -Po '(?<=^cert_path = ).*' "$CONF_FILE" | tr -d '\r ' )
+    DOM=$(grep -Po '(?<=^domain = ).*' "$CONF_FILE" | tr -d '\r ' )
     
-    # 逻辑修正：如果域名为空，获取公网IP
-    if [[ -z "$DOM" ]]; then
-        ADDR=$(curl -s ifconfig.me || curl -s api.ipify.org || echo "您的IP")
+    # 采用最传统的 if 结构，避免 [[ ]] 里的隐藏字符
+    if [ -z "$DOM" ]; then
+        ADDR=$(curl -s ifconfig.me)
     else
-        ADDR=$DOM
+        ADDR="$DOM"
     fi
 
-    # 判断协议
-    if [[ -n "$CT" ]]; then SCH="https"; else SCH="http"; fi
+    if [ -n "$CT" ]; then
+        SCH="https"
+    else
+        SCH="http"
+    fi
     
     echo -e "\n${GREEN}========================================${PLAIN}"
     echo -e "${GREEN}    订阅管理信息 (已生效) ${PLAIN}"
     echo -e "订阅地址: ${YELLOW}${SCH}://${ADDR}:${PT}/${TK}${PLAIN}"
     echo -e "配置文件: ${YELLOW}nano $CONF_FILE${PLAIN}"
-    echo -e "服务状态: $(systemctl is-active subscribe 2>/dev/null || echo 'inactive')"
+    echo -e "服务状态: $(systemctl is-active subscribe 2>/dev/null)"
     echo -e "${GREEN}========================================${PLAIN}"
     echo -e "${YELLOW}提示：请编辑配置文件并在 [nodes] 下方添加节点链接后即可使用。${PLAIN}\n"
 }
@@ -76,28 +78,26 @@ install_sub() {
     
     mkdir -p $CONF_DIR $WEB_ROOT
     
-    # 证书识别
     IFS='|' read -r AUTO_CERT AUTO_KEY <<< "$(find_xui_cert)"
     
     echo -e "\n${YELLOW}--- 配置向导 ---${PLAIN}"
-    read -p "1. 输入您的解析域名 (直接回车则使用IP): " user_domain
-    read -p "2. 设置订阅安全Token (建议长乱码): " user_token
+    read -p "1. 输入域名 (留空用IP): " user_domain
+    read -p "2. 设置Token (留空自动生成): " user_token
     user_token=${user_token:-sub$(date +%s)}
-    read -p "3. 设置订阅端口 (默认 8080): " user_port
+    read -p "3. 设置端口 (默认 8080): " user_port
     user_port=${user_port:-8080}
     
     local user_cert=""
     local user_key=""
-    if [ ! -z "$AUTO_CERT" ]; then
-        echo -e "${GREEN}检测到 x-ui 域名证书: $AUTO_CERT${PLAIN}"
-        read -p "是否引用此证书启用 HTTPS? (y/n, 默认y): " use_ssl
-        if [[ "$use_ssl" != "n" ]]; then
-            user_cert=$AUTO_CERT
-            user_key=$AUTO_KEY
+    if [ -n "$AUTO_CERT" ]; then
+        echo -e "${GREEN}检测到证书: $AUTO_CERT${PLAIN}"
+        read -p "启用 HTTPS? (y/n): " use_ssl
+        if [ "$use_ssl" != "n" ]; then
+            user_cert="$AUTO_CERT"
+            user_key="$AUTO_KEY"
         fi
     fi
 
-    # 写入 config.ini
     cat << EOF > $CONF_FILE
 [settings]
 domain = $user_domain
@@ -107,10 +107,8 @@ cert_path = $user_cert
 key_path = $user_key
 
 [nodes]
-# 粘贴链接到此处 (一行一个)
 EOF
 
-    # 写入 Nginx 生成器
     cat << 'EOF' > $CONF_DIR/nginx_gen.sh
 #!/bin/bash
 INI="/opt/subscribe/config.ini"
@@ -118,14 +116,12 @@ PORT=$(grep -Po '(?<=^port = ).*' "$INI" | tr -d '\r ')
 CERT=$(grep -Po '(?<=^cert_path = ).*' "$INI" | tr -d '\r ')
 KEY=$(grep -Po '(?<=^key_path = ).*' "$INI" | tr -d '\r ')
 DOM=$(grep -Po '(?<=^domain = ).*' "$INI" | tr -d '\r ')
-[[ -z "$DOM" ]] && DOM="_"
-
-if [[ -f "$CERT" && -f "$KEY" ]]; then
-    SSL="listen $PORT ssl; ssl_certificate $CERT; ssl_certificate_key $KEY; ssl_protocols TLSv1.2 TLSv1.3;"
+[ -z "$DOM" ] && DOM="_"
+if [ -f "$CERT" ] && [ -f "$KEY" ]; then
+    SSL="listen $PORT ssl; ssl_certificate $CERT; ssl_certificate_key $KEY;"
 else
     SSL="listen $PORT;"
 fi
-
 cat << N_EOF > /etc/nginx/sites-available/subscribe
 server {
     $SSL
@@ -143,7 +139,6 @@ systemctl restart nginx
 EOF
     chmod +x $CONF_DIR/nginx_gen.sh
 
-    # 写入监控脚本
     cat << 'EOF' > $CONF_DIR/update.sh
 #!/bin/bash
 INI="/opt/subscribe/config.ini"
@@ -152,11 +147,9 @@ update() {
     bash /opt/subscribe/nginx_gen.sh
     TK=$(grep -Po '(?<=^token = ).*' "$INI" | tr -d '\r ')
     ND=$(sed -n '/\[nodes\]/,$p' "$INI" | grep -v '\[nodes\]' | grep -v '^#' | grep -v '^[[:space:]]*$')
-    if [ ! -z "$TK" ]; then
+    if [ -n "$TK" ]; then
         rm -rf "$ROOT"/*
-        if [ ! -z "$ND" ]; then
-            echo "$ND" | base64 -w 0 > "$ROOT/$TK"
-        fi
+        [ -n "$ND" ] && echo "$ND" | base64 -w 0 > "$ROOT/$TK"
     fi
 }
 update
@@ -164,17 +157,14 @@ inotifywait -m -e modify "$INI" | while read line; do update; done
 EOF
     chmod +x $CONF_DIR/update.sh
 
-    # 注册服务
     cat << 'EOF' > /etc/systemd/system/subscribe.service
 [Unit]
 Description=Subscribe Service
 After=network.target nginx.service
-
 [Service]
 ExecStart=/bin/bash /opt/subscribe/update.sh
 Restart=always
 User=root
-
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -183,33 +173,22 @@ EOF
     systemctl enable --now subscribe
     ln -sf /etc/nginx/sites-available/subscribe /etc/nginx/sites-enabled/
     rm -f /etc/nginx/sites-enabled/default
-    
-    # 最终生效
     bash $CONF_DIR/nginx_gen.sh
-    
     echo -e "${GREEN}安装成功！${PLAIN}"
     show_info
 }
 
-# --- 功能：卸载 ---
 uninstall_sub() {
     systemctl stop subscribe 2>/dev/null
     systemctl disable subscribe 2>/dev/null
     rm -rf /etc/systemd/system/subscribe.service $CONF_DIR $WEB_ROOT /etc/nginx/sites-enabled/subscribe
     systemctl restart nginx
-    echo -e "${GREEN}系统已彻底卸载。${PLAIN}"
+    echo -e "${GREEN}卸载完成。${PLAIN}"
 }
 
-# --- 菜单 ---
 clear
-echo -e "${GREEN}########################################${PLAIN}"
-echo -e "${GREEN}#       V2Ray/X-UI 订阅一键脚本        #${PLAIN}"
-echo -e "${GREEN}########################################${PLAIN}"
-echo -e "  1. 安装系统"
-echo -e "  2. 查看订阅地址"
-echo -e "  3. 卸载系统"
-echo -e "  0. 退出"
-read -p "选择 [0-3]: " opt
+echo -e "1. 安装\n2. 信息\n3. 卸载\n0. 退出"
+read -p "选择: " opt
 case $opt in
     1) install_sub ;;
     2) show_info ;;
