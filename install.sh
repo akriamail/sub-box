@@ -44,27 +44,27 @@ show_info() {
         return
     fi
     
-    # 解析配置
-    TK=$(grep -Po '(?<=^token = ).*' "$CONF_FILE" | tr -d '\r ')
-    PT=$(grep -Po '(?<=^port = ).*' "$CONF_FILE" | tr -d '\r ')
-    CT=$(grep -Po '(?<=^cert_path = ).*' "$CONF_FILE" | tr -d '\r ')
-    DOM=$(grep -Po '(?<=^domain = ).*' "$CONF_FILE" | tr -d '\r ')
+    # 解析配置，去除可能存在的空格和换行符
+    TK=$(grep -Po '(?<=^token = ).*' "$CONF_FILE" | tr -d '\r ' || echo "")
+    PT=$(grep -Po '(?<=^port = ).*' "$CONF_FILE" | tr -d '\r ' || echo "8080")
+    CT=$(grep -Po '(?<=^cert_path = ).*' "$CONF_FILE" | tr -d '\r ' || echo "")
+    DOM=$(grep -Po '(?<=^domain = ).*' "$CONF_FILE" | tr -d '\r ' || echo "")
     
-    # 修复：确保语法正确
+    # 逻辑修正：如果域名为空，获取公网IP
     if [[ -z "$DOM" ]]; then
-        ADDR=$(curl -s ifconfig.me)
+        ADDR=$(curl -s ifconfig.me || curl -s api.ipify.org || echo "您的IP")
     else
         ADDR=$DOM
     fi
 
     # 判断协议
-    [[ -z "$CT" ]] && SCH="http" || SCH="https"
+    if [[ -n "$CT" ]]; then SCH="https"; else SCH="http"; fi
     
     echo -e "\n${GREEN}========================================${PLAIN}"
     echo -e "${GREEN}    订阅管理信息 (已生效) ${PLAIN}"
     echo -e "订阅地址: ${YELLOW}${SCH}://${ADDR}:${PT}/${TK}${PLAIN}"
     echo -e "配置文件: ${YELLOW}nano $CONF_FILE${PLAIN}"
-    echo -e "服务状态: $(systemctl is-active subscribe 2>/dev/null || echo '未启动')"
+    echo -e "服务状态: $(systemctl is-active subscribe 2>/dev/null || echo 'inactive')"
     echo -e "${GREEN}========================================${PLAIN}"
     echo -e "${YELLOW}提示：请编辑配置文件并在 [nodes] 下方添加节点链接后即可使用。${PLAIN}\n"
 }
@@ -86,8 +86,8 @@ install_sub() {
     read -p "3. 设置订阅端口 (默认 8080): " user_port
     user_port=${user_port:-8080}
     
-    user_cert=""
-    user_key=""
+    local user_cert=""
+    local user_key=""
     if [ ! -z "$AUTO_CERT" ]; then
         echo -e "${GREEN}检测到 x-ui 域名证书: $AUTO_CERT${PLAIN}"
         read -p "是否引用此证书启用 HTTPS? (y/n, 默认y): " use_ssl
