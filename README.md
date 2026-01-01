@@ -1,14 +1,24 @@
 # 🚀 X-UI Sub-Box v1.0.1 (Stable)
 
-这是一个为 X-UI 打造的轻量级、自动化订阅管理工具。它能将你杂乱的节点链接转换成带自定义备注的、符合 Shadowrocket (小火箭) 规范的订阅源。
+A lightweight, automated subscription management tool for X-UI. It transforms raw node links into customized, clean, and Shadowrocket-compatible subscription feeds.
 
-## ✨ 核心特性
+## ✨ Key Features
 
-- 🛠 **深度协议重写**：自动解包 VMess 的 Base64 数据，修改内部 `ps` 字段，确保小火箭显示精准备注。
-- ⚡ **毫秒级同步**：采用 Linux `inotify` 异步监听技术，修改配置后订阅即刻生效。
-- 🔒 **安全加固**：支持 SSL 加密访问，通过随机 Token 隐藏订阅路径，防探测。
-- 🧹 **纯净输出**：自动过滤配置文件中的非协议行（如域名、Token 等），输出纯净的 Base64 订阅流。
-- 🚀 **一键部署**：全自动安装 Nginx、依赖包并配置开机自启。
+- 🛠 **Deep Protocol Rewriting**: Automatically decodes VMess Base64 data to modify the internal `ps` field for precise node naming.
+- ⚡ **Real-time Sync**: Leverages Linux `inotify` for millisecond-level synchronization when the configuration changes.
+- 🔒 **Secure Access**: Supports SSL encryption and uses randomized Tokens to hide subscription paths from scanners.
+- 🧹 **Pure Output**: Filters out non-protocol lines (domains, tokens, etc.) to provide a clean Base64 subscription stream.
+- 🚀 **One-Click Deployment**: Automated installation of Nginx, dependencies, and systemd service setup.
+
+## 📥 Quick Installation
+
+Run the following command on your Linux server:
+
+```bash
+
+bash <(curl -Ls https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh)
+
+```
 
 ## 📥 快速安装
 
