@@ -1,60 +1,70 @@
 #!/bin/bash
-# ==========================================
-# X-UI Sub Manager - Core Engine (v1.0.0-Stable)
-# 功能：实时监听配置、全协议过滤、VMess 内部重写
-# ==========================================
 
-CONF_PATH="/opt/subscribe/config.ini"
-SUB_DIR="/var/www/subscribe"
+# 配置路径
+CONFIG_DIR="/opt/subscribe"
+WEB_DIR="/var/www/subscribe"
+TOKEN_FILE=$(ls $WEB_DIR | head -n 1)
 
-while true; do
-    # 1. 自动获取当前 Token (支持动态修改)
-    TOKEN=$(grep 'token =' $CONF_PATH | cut -d'=' -f2 | tr -d ' ')
+# 核心处理函数
+process_nodes() {
+    echo "检测到配置变更，正在重新聚合节点..."
     
-    # 2. 等待配置文件保存（close_write 事件）
-    inotifywait -e close_write $CONF_PATH
-    
-    # 3. 开始处理节点列表
-    tmp_list="/tmp/sub_list"
-    > $tmp_list
-    
-    while read -r line; do
-        # 仅处理包含协议头的行，过滤掉 domain/token 等配置行
-        if [[ "$line" =~ ^vmess:// ]]; then
-            # --- VMess 深度重写逻辑 ---
-            raw_link=$(echo "$line" | cut -d'|' -f1 | sed 's/vmess:\/\///')
-            custom_name=$(echo "$line" | cut -d'|' -f2)
+    # 1. 聚合目录下所有 .ini 文件的 [nodes] 部分
+    combined_content=""
+    for ini_file in ${CONFIG_DIR}/*.ini; do
+        if [ -f "$ini_file" ]; then
+            # 提取 [nodes] 之后的内容，过滤掉协议头以外的杂质
+            content=$(sed -n '/\[nodes\]/,$p' "$ini_file" | grep -E "^(vmess|vless|trojan|ss|ssr)://" | grep -v "^$")
+            combined_content+="$content"$'\n'
+        fi
+    done
+
+    # 2. 处理聚合后的节点（重命名逻辑）
+    processed_nodes=""
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        
+        if [[ $line == vmess://* ]]; then
+            # VMess 深度重写逻辑
+            raw_base64=$(echo "$line" | sed 's/vmess:\/\///')
+            json_data=$(echo "$raw_base64" | base64 -d 2>/dev/null)
             
-            if [[ "$line" == *"|"* ]]; then
-                decoded_json=$(echo "$raw_link" | base64 -d 2>/dev/null)
-                if [[ -n "$decoded_json" ]]; then
-                    # 关键手术：精准替换 JSON 内部的 ps 字段
-                    new_json=$(echo "$decoded_json" | sed "s/\"ps\":\s*\"[^\"]*\"/\"ps\": \"$custom_name\"/")
-                    final_line="vmess://$(echo -n "$new_json" | base64 -w 0)"
+            if [ -n "$json_data" ]; then
+                link_part=$(echo "$line" | cut -d'|' -f1)
+                new_name=$(echo "$line" | cut -d'|' -f2)
+                
+                if [[ "$line" == *"|"* ]]; then
+                    new_json=$(echo "$json_data" | jq -r ".ps=\"$new_name\"" 2>/dev/null || echo "$json_data" | sed "s/\"ps\":\"[^\"]*\"/\"ps\":\"$new_name\"/")
+                    new_link="vmess://$(echo -n "$new_json" | base64 -w 0)"
+                    processed_nodes+="$new_link"$'\n'
                 else
-                    final_line="vmess://$raw_link"
+                    processed_nodes+="$link_part"$'\n'
                 fi
-            else
-                final_line="vmess://$raw_link"
             fi
-            echo "$final_line" >> $tmp_list
-            
-        elif [[ "$line" =~ ^(vless|trojan|ss):// ]]; then
-            # --- 其他协议备注处理 (链接#备注) ---
+        else
+            # 其他协议（Trojan/VLESS 等）简单重写
             if [[ "$line" == *"|"* ]]; then
-                raw_link=$(echo "$line" | cut -d'|' -f1 | sed 's/#.*//')
-                custom_name=$(echo "$line" | cut -d'|' -f2)
-                echo "${raw_link}#${custom_name}" >> $tmp_list
+                link_part=$(echo "$line" | cut -d'|' -f1)
+                new_name=$(echo "$line" | cut -d'|' -f2)
+                clean_link=$(echo "$link_part" | cut -d'#' -f1)
+                processed_nodes+="${clean_link}#${new_name}"$'\n'
             else
-                echo "$line" >> $tmp_list
+                processed_nodes+="$line"$'\n'
             fi
         fi
-    done < $CONF_PATH
+    done <<< "$combined_content"
 
-    # 4. 生成订阅文件并加密
-    base64 -w 0 $tmp_list > $SUB_DIR/$TOKEN
-    chown www-data:www-data $SUB_DIR/$TOKEN
-    
-    # 清理临时文件
-    rm -f $tmp_list
+    # 3. 最终 Base64 编码并写入订阅文件
+    echo -n "$processed_nodes" | base64 -w 0 > "${WEB_DIR}/${TOKEN_FILE}"
+    echo "✅ 聚合完成，订阅已更新。"
+}
+
+# 初始执行一次
+process_nodes
+
+# 使用 inotifywait 监控整个目录的增删改
+echo "开始监控目录: ${CONFIG_DIR} ..."
+while true; do
+    inotifywait -e modify -e create -e delete -e move "$CONFIG_DIR"
+    process_nodes
 done
