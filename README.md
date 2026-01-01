@@ -14,17 +14,18 @@
 
 在你的 Linux 服务器上运行以下指令：
 
-```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh](https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh))
+你需要先安装X-UI ，并设置好panel的证书，通常证书
+
+bash <(curl -Ls https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh)
+
 ⚙️ 使用说明
+
 安装完成后，编辑配置文件： vi /opt/subscribe/config.ini
 
 在 [nodes] 区域下方添加你的节点链接，使用 | 分隔备注：
-
-Ini, TOML
-
 vmess://xxxx...|香港-01机房
 trojan://xxxx...|日本-原生IP
+
 保存退出，你的订阅链接已自动更新！
 
 🔗 订阅链接格式
