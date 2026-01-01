@@ -1,0 +1,53 @@
+name: Script Test (v1.0)
+
+on: [push, pull_request] # 当你提交代码时自动触发测试
+
+jobs:
+  test-installation:
+    runs-on: ubuntu-latest # 使用 GitHub 提供的最新 Ubuntu 环境
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Mock Environment
+        run: |
+          # 模拟服务器真实环境
+          sudo mkdir -p /root/cert/hk2.changuoo.com
+          # 模拟一个虚假的域名证书和私钥
+          sudo openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout /root/cert/hk2.changuoo.com/privkey.pem \
+            -out /root/cert/hk2.changuoo.com/fullchain.pem \
+            -subj "/C=CN/ST=HK/L=HK/O=Test/OU=IT/CN=hk2.changuoo.com"
+          # 模拟一个自签名证书（测试排除逻辑）
+          sudo mkdir -p /root/cert/selfsigned
+          sudo openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout /root/cert/selfsigned/privkey.pem \
+            -out /root/cert/selfsigned/fullchain.pem \
+            -subj "/CN=selfsigned"
+
+      - name: Run Script Installation (Automated Input)
+        run: |
+          # 使用 printf 模拟用户手动输入：域名、Token(回车)、端口(回车)、确认证书(y)
+          chmod +x install.sh
+          sudo printf "hk2.changuoo.com\n\n\ny\n" | sudo ./install.sh <<EOF
+          1
+          0
+          EOF
+
+      - name: Verify Results
+        run: |
+          # 验证 1：config.ini 是否存在且正确
+          if [ -f "/opt/subscribe/config.ini" ]; then
+            echo "✅ Config file created."
+            grep "cert_path =" /opt/subscribe/config.ini
+          else
+            echo "❌ Config file missing!"; exit 1
+          fi
+          
+          # 验证 2：Nginx 配置是否生成
+          if [ -f "/etc/nginx/sites-available/subscribe" ]; then
+            echo "✅ Nginx config generated."
+          else
+            echo "❌ Nginx config missing!"; exit 1
+          fi
