@@ -14,12 +14,9 @@
 
 在你的 Linux 服务器上运行以下指令：
 
-你需要先安装X-UI ，并设置好panel的证书，通常证书
+你需要先安装X-UI ，并设置好panel的证书
 
-### 🚀 快速安装
-
-
-在你的 Linux 服务器上运行以下指令：
+然后 在你的 Linux 服务器上运行以下指令:
 
 ```bash
 
@@ -27,7 +24,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/akriamail/sub-box/main/install
 
 ```
 
-⚙️ 使用说明
+## ⚙️ 使用说明
 
 安装完成后，编辑配置文件：
 ```bash
@@ -43,12 +40,11 @@ trojan://xxxx...|日本-原生IP
 
 保存退出，你的订阅链接已自动更新！
 
-🔗 订阅链接格式
-https://你的域名:8080/你的Token
+🔗 订阅链接格式```bash https://你的域名:8080/你的Token```
 
 🛡 维护说明
-引擎状态检查：ps -ef | grep update.sh
+-引擎状态检查：```bash ps -ef | grep update.sh ```
 
-查看输出结果：cat /var/www/subscribe/你的Token | base64 -d
+-查看输出结果：```bash cat /var/www/subscribe/你的Token | base64 -d ```
 
-日志查看：/opt/subscribe/update.sh 已配置为后台运行。
+-日志查看：```bash /opt/subscribe/update.sh ```已配置为后台运行。
