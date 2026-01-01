@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==========================================
-# X-UI Sub Manager - Core Engine (v1.02)
-# 职责：全协议备注名强制覆盖逻辑
+# X-UI Sub Manager - Core Engine (v1.04)
+# 职责：深度重写 VMess 内部备注 + 协议过滤
 # ==========================================
 
 TOKEN=$(grep 'token =' /opt/subscribe/config.ini | cut -d'=' -f2 | tr -d ' ')
@@ -13,13 +13,32 @@ while true; do
     > $tmp_list
     
     while read -r line; do
-        # 核心改动：只处理包含 vmess://, vless://, trojan://, ss:// 等前缀的行
-        if [[ "$line" =~ ^(vmess|vless|trojan|ss):// ]]; then
+        if [[ "$line" =~ ^vmess:// ]]; then
+            # --- VMess 深度处理逻辑 ---
+            raw_link=$(echo "$line" | cut -d'|' -f1 | sed 's/vmess:\/\///')
+            custom_name=$(echo "$line" | cut -d'|' -f2)
+            
             if [[ "$line" == *"|"* ]]; then
-                raw_link=$(echo "$line" | cut -d'|' -f1)
+                # 解码 JSON -> 修改 ps 字段 -> 重新 Base64 编码
+                decoded_json=$(echo "$raw_link" | base64 -d 2>/dev/null)
+                if [[ -n "$decoded_json" ]]; then
+                    # 使用 sed 替换 JSON 里的 ps 字段内容
+                    new_json=$(echo "$decoded_json" | sed "s/\"ps\":\s*\"[^\"]*\"/\"ps\": \"$custom_name\"/")
+                    final_line="vmess://$(echo -n "$new_json" | base64 -w 0)"
+                else
+                    final_line="vmess://$raw_link"
+                fi
+            else
+                final_line="vmess://$raw_link"
+            fi
+            echo "$final_line" >> $tmp_list
+            
+        elif [[ "$line" =~ ^(vless|trojan|ss):// ]]; then
+            # --- 其他协议（Trojan/VLESS）简单处理 ---
+            if [[ "$line" == *"|"* ]]; then
+                raw_link=$(echo "$line" | cut -d'|' -f1 | sed 's/#.*//')
                 custom_name=$(echo "$line" | cut -d'|' -f2)
-                clean_link=$(echo "$raw_link" | sed 's/#.*//')
-                final_line="${clean_link}#${custom_name}"
+                final_line="${raw_link}#${custom_name}"
             else
                 final_line="$line"
             fi
