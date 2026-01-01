@@ -1,4 +1,15 @@
-# 🚀 X-UI Sub-Box v1.0.1 (Stable)
+# 🚀 X-UI Sub-Box v1.0.4(dev)
+
+多源聚合 (进阶)
+你可以创建多个 .ini 文件来管理不同来源的节点。引擎会自动合并 /opt/subscribe/ 目录下所有的 .ini 文件。 例如，创建 extend.ini 存放远程节点：
+
+
+vi /opt/subscribe/extend.ini
+
+[nodes]
+vmess://xxxx...|香港-自建
+vless://yyyy...|日本-原生IP
+
 
 A lightweight, automated subscription management tool for X-UI. It transforms raw node links into customized, clean, and Shadowrocket-compatible subscription feeds.
 
