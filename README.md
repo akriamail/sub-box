@@ -1,60 +1,38 @@
-📝 X-UI Subscribe Manager v1.0 README
-🚀 项目简介
-这是一个专为 X-UI 环境设计的极简订阅管理系统。它通过监控本地 config.ini 文件的变化，自动将节点链接转码为标准 Base64 订阅格式，并利用 Nginx 提供安全的 HTTPS 订阅分发。
+# 🚀 X-UI Sub-Box v1.0.1 (Stable)
 
-✨ 核心特性 (v1.0 稳定版)
-🎯 智能证书检索：自动深度扫描 /root/cert 目录，精准匹配域名证书与私钥，自动排除自签名证书。
+这是一个为 X-UI 打造的轻量级、自动化订阅管理工具。它能将你杂乱的节点链接转换成带自定义备注的、符合 Shadowrocket (小火箭) 规范的订阅源。
 
-🛠️ 完美兼容 vi/vim：针对 vi 编辑器的“临时文件覆盖”机制优化了 inotify 监控逻辑，确保保存即生效，不再断流。
+## ✨ 核心特性
 
-🛡️ 零 404 漏洞：
+- 🛠 **深度协议重写**：自动解包 VMess 的 Base64 数据，修改内部 `ps` 字段，确保小火箭显示精准备注。
+- ⚡ **毫秒级同步**：采用 Linux `inotify` 异步监听技术，修改配置后订阅即刻生效。
+- 🔒 **安全加固**：支持 SSL 加密访问，通过随机 Token 隐藏订阅路径，防探测。
+- 🧹 **纯净输出**：自动过滤配置文件中的非协议行（如域名、Token 等），输出纯净的 Base64 订阅流。
+- 🚀 **一键部署**：全自动安装 Nginx、依赖包并配置开机自启。
 
-强力权限管理：自动修正 www-data 用户对订阅文件的读取权限。
+## 📥 快速安装
 
-变量转义修复：Nginx 配置采用 $uri 原生匹配，杜绝路径解析错误。
+在你的 Linux 服务器上运行以下指令：
 
-⚡ 安装即同步：安装完成瞬间自动生成订阅文件，无需等待第一次修改。
+```bash
+bash <(curl -Ls [https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh](https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh))
+⚙️ 使用说明
+安装完成后，编辑配置文件： vi /opt/subscribe/config.ini
 
-📊 交互回显：安装完成后显式打印 安全 Token 和 完整订阅链接，管理更透明。
+在 [nodes] 区域下方添加你的节点链接，使用 | 分隔备注：
 
-📂 目录结构
-/opt/subscribe/：系统核心目录
+Ini, TOML
 
-config.ini：核心配置文件（在此编辑 Token、端口、证书路径和节点链接）
+vmess://xxxx...|香港-01机房
+trojan://xxxx...|日本-原生IP
+保存退出，你的订阅链接已自动更新！
 
-update.sh：后台实时监控与同步脚本
+🔗 订阅链接格式
+https://你的域名:8080/你的Token
 
-nginx_gen.sh：Nginx 配置自动生成脚本
+🛡 维护说明
+引擎状态检查：ps -ef | grep update.sh
 
-/var/www/subscribe/：订阅文件分发目录（存放 Base64 后的 Token 文件）
+查看输出结果：cat /var/www/subscribe/你的Token | base64 -d
 
-🛠️ 使用说明
-1. 安装与修复
-直接运行脚本并选择选项 1，按向导输入域名即可。
-
-2. 添加/修改节点
-使用你喜欢的编辑器修改配置文件：
-
-Bash
-
-vi /opt/subscribe/config.ini
-在 [nodes] 下方粘贴你的 vmess://、vless:// 或 ss:// 链接。保存退出（:wq）后，订阅链接将秒速更新。
-
-3. 客户端使用
-将脚本最后生成的链接填入 Shadowrocket 或 V2RayN 即可： https://你的域名:端口/你的Token
-
-⚠️ 注意事项
-防火墙：请确保你的云服务器安全组已放行设置的订阅端口（如 8080）。
-
-证书位置：默认扫描路径为 /root/cert，请确保 X-UI 的证书存放在此目录下。
-
-Token 安全：Token 是访问订阅的唯一凭证，请妥善保管。
-
-📜 版本日志
-2025-12-31 (v1.0)：
-
-修复了 vi 编辑器修改导致的 inotify 失效 Bug。
-
-修复了 root 权限创建文件导致的 Nginx 403/404 错误。
-
-增强了域名证书自动匹配逻辑。
+日志查看：/opt/subscribe/update.sh 已配置为后台运行。
