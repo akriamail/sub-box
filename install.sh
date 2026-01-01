@@ -53,7 +53,7 @@ show_info() {
     STATUS=$(systemctl is-active subscribe 2>/dev/null)
     
     echo -e "\n${BLUE}================================================================${PLAIN}"
-    echo -e "              ${GREEN}🚀 X-UI 极简订阅管理系统 ${PLAIN}"
+    echo -e "              ${GREEN}🚀 节点订阅管理系统 ${PLAIN}"
     echo -e "${BLUE}================================================================${PLAIN}"
     echo -e "  ${YELLOW}▶ 订阅链接:${PLAIN}  ${GREEN}${SCH}://${ADDR}:${PT}/${TK}${PLAIN}"
     echo -e "  ${YELLOW}▶ 安全密钥:${PLAIN}  ${RED}${TK}${PLAIN}"
