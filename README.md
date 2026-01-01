@@ -16,7 +16,14 @@
 
 你需要先安装X-UI ，并设置好panel的证书，通常证书
 
+### 🚀 快速安装
+
+
+在你的 Linux 服务器上运行以下指令：
+
+\`\`\`bash
 bash <(curl -Ls https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh)
+\`\`\`
 
 ⚙️ 使用说明
 
