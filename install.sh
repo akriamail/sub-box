@@ -26,7 +26,7 @@ if [ -f "$CONF_FILE" ]; then
     echo "✅ 沿用域名: $DOMAIN"
     echo "✅ 沿用 Token: $TOKEN"
 else
-    read -p "请输入你的订阅域名 (例如 hk2.changuoo.com): " DOMAIN
+    read -p "请输入你的订阅域名 (例如 www.mocrosoft.com): " DOMAIN
     TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
     
     cat > "$CONF_FILE" <<EOF
@@ -75,5 +75,6 @@ nohup /opt/subscribe/update.sh > /dev/null 2>&1 &
 echo "--------------------------------------------------"
 echo "✅ X-UI Sub-Box v1.0.0 (Stable) 安装成功！"
 echo "管理目录: /opt/subscribe"
+echo "管理节点: 编辑 /opt/subscribe/config.ini 中的nodes"
 echo "订阅链接: https://$DOMAIN:8080/$TOKEN"
 echo "--------------------------------------------------"
