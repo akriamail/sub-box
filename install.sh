@@ -10,7 +10,7 @@ echo "--------------------------------------------------"
 
 # 1. 安装依赖
 apt update
-apt install -y inotify-tools curl nginx base64 cron
+apt install -y inotify-tools curl nginx coreutils cron
 
 # 2. 创建必要目录
 mkdir -p /opt/subscribe
