@@ -1,4 +1,7 @@
-*.txt
 *.ini
+*.txt
 *.log
+*.bak
+*.save
+*.tmp
 token.txt
