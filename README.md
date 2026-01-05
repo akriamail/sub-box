@@ -32,11 +32,8 @@ bash install.sh
 
 ## ⚙️ 运维指南
 ### 1. 确认引擎状态
-使用
-```bash 
-ps -ef | grep update.sh
- ```
- 查看进程。
+使用ps -ef | grep update.sh查看进程。
+
 若修改了脚本逻辑，请重启引擎：
 ```bash
 pkill -f update.sh && nohup /opt/subscribe/update.sh > /dev/null 2>&1 &
