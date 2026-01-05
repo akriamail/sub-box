@@ -10,17 +10,25 @@
     * **定时抓取**: 每天凌晨自动抓取、筛选并更新机场节点。
 * **一键部署**: 集成 Nginx SSL 自动配置，实现安全的 HTTPS 订阅分发。
 
-## 📦 快速安装
-\`\`\`bash
-bash <(curl -Ls https://raw.githubusercontent.com/akriamail/sub-box/main/install.sh)
-\`\`\`
+## 📦 安装方法 (推荐)
 
+采用 Git 模式安装，方便后续一键升级：
+
+```bash
+# 1. 克隆代码到指定目录
+git clone [https://github.com/akriamail/sub-box.git](https://github.com/akriamail/sub-box.git) /opt/subscribe
+
+# 2. 进入目录并运行初始化脚本
+cd /opt/subscribe
+bash install.sh
+```
 ## 🛠️ 文件结构说明
 * **update.sh**: 聚合引擎核心，后台常驻进程，负责监控文件变动并生成订阅。
 * **fetch_ext.sh**: 外部抓取工具，负责从机场获取并筛选节点。
 * **airport_url.txt**: (需手动创建) 存放你的机场订阅原始链接，受 \`.gitignore\` 保护。
 * **config.ini**: 存放你的自建节点信息。
 * **extend.ini**: 存放自动抓取到的机场节点。
+
 
 ## ⚙️ 运维指南
 ### 1. 确认引擎状态
