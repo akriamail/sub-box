@@ -10,15 +10,16 @@
     * **定时抓取**: 每天凌晨自动抓取、筛选并更新机场节点。
 * **一键部署**: 集成 Nginx SSL 自动配置，实现安全的 HTTPS 订阅分发。
 
-# 📋 前置要求
+## 📋 前置要求
 1. **安装 X-UI**: 确保服务器已安装 X-UI 并申请了 SSL 证书。
 2. **证书路径**: 脚本默认读取 `/root/cert/你的域名/` 目录下的 `fullchain.pem` 和 `privkey.pem`。
    * *提示：如果你使用其他路径，请在安装后修改 config.ini。*
-# 安装 X-UI 并申请证书
+## 安装 X-UI 并申请证书
+```bash
 bash <(curl -Ls https://raw.githubusercontent.com/vaxilu/x-ui/master/install.sh)
+```
 
-
-# 📦 安装方法 (推荐)
+## 📦 安装方法 (推荐)
 
 采用 Git 模式安装，方便后续一键升级：
 
