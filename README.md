@@ -32,15 +32,16 @@ bash install.sh
 
 ## ⚙️ 运维指南
 ### 1. 确认引擎状态
-使用 \`ps -ef | grep update.sh\` 查看进程。若修改了脚本逻辑，请重启引擎：
-\`\`\`bash
+使用`` bash ps -ef | grep update.sh ``` 查看进程。
+若修改了脚本逻辑，请重启引擎：
+```bash
 pkill -f update.sh && nohup /opt/subscribe/update.sh > /dev/null 2>&1 &
-\`\`\`
+```
 
 ### 2. 手动触发抓取
-\`\`\`bash
+```bash
 bash /opt/subscribe/fetch_ext.sh
-\`\`\`
+```
 
 ## 🛡️ 安全提示
-本项目默认通过 \`.gitignore\` 忽略所有 \`.ini\`、\`.txt\`、\`.bak\` 文件，确保您的订阅链接和节点隐私不外泄。
+本项目默认通过 .gitignore\ 忽略所有 .ini\ .txt .bak  文件，确保您的订阅链接和节点隐私不外泄。
