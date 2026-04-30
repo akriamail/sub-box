@@ -9,6 +9,7 @@ status_main() {
     # ── 系统 ──
     echo -e "${CYAN}── 系统 ──────────────────────────────${NC}"
     if [[ -f /etc/os-release ]]; then
+        local NAME VERSION_ID VERSION
         . /etc/os-release
         echo "  OS:       $NAME $VERSION_ID"
     fi

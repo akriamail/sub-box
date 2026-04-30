@@ -80,6 +80,7 @@ bash /opt/subscribe/manager.sh
 | 7 | 修改 sing-box 配置 | 编辑 JSON / 重置协议 / 查看配置 |
 | 8 | 重启组件 | sing-box / Nginx / update.sh |
 | 9 | 重新安装 sing-box | 下载最新版 |
+| 10 | 修改 Web 手册登录密码 | 用户名固定 `admin`，密码写入 `web.htpasswd` |
 
 主菜单还提供 **刷新客户端版本**，会从 GitHub Releases 拉取 Android v2rayNG APK 与 Windows v2rayN ZIP，保存到 Nginx 的 `/clients/` 目录，并刷新首页手册里的本地下载链接。
 
@@ -95,7 +96,7 @@ bash /opt/subscribe/manager.sh
 
 | 协议 | 默认端口 | 认证 |
 |------|---------|------|
-| Trojan | 443 | 16 位随机密码 |
+| Trojan | 62333 | 16 位随机密码 |
 | VMess | 8443 | UUID v4 |
 | VLESS + Reality | 8444 | UUID + Reality Key Pair |
 | Hysteria2 | 8445 | 16 位随机密码 |
@@ -138,13 +139,24 @@ bash /opt/subscribe/bin/refresh_clients.sh
 
 或在 Manager 主菜单选择 **刷新客户端版本**。刷新后文件会保存到 `/var/www/subscribe/clients/`，首页会自动显示当前镜像版本。
 
+### Web 手册登录
+
+手册页和 `/clients/` 下载区默认启用 HTTP Basic Auth：
+
+- 默认用户名：`admin`
+- 默认密码：`admin`
+- 密码文件：`/opt/subscribe/web.htpasswd`
+
+订阅 token 文件不启用 Basic Auth，以保证 Shadowrocket、v2rayNG、v2rayN 等客户端可以正常更新订阅。部署后建议立刻在 Manager 的 **修改配置 → 修改 Web 手册登录密码** 中修改默认密码。
+
 ## 端口规划
 
 | 端口 | 用途 |
 |------|------|
 | 80 | acme.sh HTTP 验证（临时） |
-| 443 | Trojan 入站 |
+| 443 | Nginx HTTPS 手册页 / 订阅分发 |
 | 8080 | 订阅分发（Nginx HTTPS） |
+| 62333 | Trojan 入站 |
 | 8443 | VMess 入站 |
 | 8444 | VLESS+Reality 入站 |
 | 8445 | Hysteria2 入站 |

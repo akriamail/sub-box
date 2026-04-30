@@ -16,9 +16,10 @@ config_main() {
         echo "  7. 修改 sing-box 配置（增删协议/改端口/改密码）"
         echo "  8. 重启组件 (sing-box / nginx / update.sh)"
         echo "  9. 重新安装 sing-box"
+        echo "  10. 修改 Web 手册登录密码"
         echo "  0. 返回主菜单"
         echo ""
-        read -r -p "请选择 [0-9]: " choice
+        read -r -p "请选择 [0-10]: " choice
 
         case "$choice" in
             1) config_domain ;;
@@ -30,6 +31,7 @@ config_main() {
             7) config_singbox ;;
             8) config_restart ;;
             9) config_reinstall_singbox ;;
+            10) config_web_auth ;;
             0) return 0 ;;
             *) error "无效选择" ;;
         esac
@@ -449,8 +451,8 @@ config_singbox() {
             [[ "$ans" =~ ^[Nn] ]] && enable_hy2=false
 
             # 设置端口
-            local tp=443 vp=8443 vlp=8444 hp=8445
-            read -r -p "  Trojan 端口 [443]: " tp_ans
+            local tp=62333 vp=8443 vlp=8444 hp=8445
+            read -r -p "  Trojan 端口 [62333]: " tp_ans
             [[ -n "$tp_ans" ]] && tp="$tp_ans"
             read -r -p "  VMess 端口 [8443]: " vp_ans
             [[ -n "$vp_ans" ]] && vp="$vp_ans"
@@ -591,5 +593,44 @@ refresh_clients_main() {
     else
         warn "刷新脚本返回异常，请检查上方输出"
     fi
+    read -r -p "按回车继续..."
+}
+
+# ==========================================
+# 修改 Web 手册登录密码
+# ==========================================
+config_web_auth() {
+    title "修改 Web 手册登录密码"
+
+    info "用户名固定为: $WEB_AUTH_USER"
+    warn "修改后访问手册页和客户端下载区需要使用新密码"
+    echo ""
+
+    local pass1 pass2
+    read -r -s -p "新密码: " pass1
+    echo ""
+    read -r -s -p "再次输入: " pass2
+    echo ""
+
+    if [[ -z "$pass1" ]]; then
+        error "密码不能为空"
+        read -r -p "按回车继续..."
+        return 1
+    fi
+    if [[ "$pass1" != "$pass2" ]]; then
+        error "两次输入不一致"
+        read -r -p "按回车继续..."
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$WEB_AUTH_FILE")"
+    printf '%s:%s\n' "$WEB_AUTH_USER" "$(openssl passwd -apr1 "$pass1")" > "$WEB_AUTH_FILE"
+    chmod 644 "$WEB_AUTH_FILE"
+
+    if systemctl is-active nginx &>/dev/null; then
+        systemctl reload nginx
+    fi
+
+    success "Web 手册登录密码已更新"
     read -r -p "按回车继续..."
 }

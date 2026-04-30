@@ -66,7 +66,7 @@ install_main() {
 
     if ! $use_defaults; then
         echo "选择要开启的协议（默认全开）:"
-        read -r -p "  Trojan (默认 443) [Y/n]: " ans
+        read -r -p "  Trojan (默认 62333) [Y/n]: " ans
         [[ "$ans" =~ ^[Nn] ]] && enable_trojan=false
 
         read -r -p "  VMess (默认 8443) [Y/n]: " ans
@@ -83,14 +83,14 @@ install_main() {
     title "参数配置"
 
     # Trojan
-    local trojan_port=443
+    local trojan_port=62333
     local trojan_pass=""
     if $enable_trojan; then
         if $use_defaults; then
             trojan_pass=$(gen_password)
-            info "Trojan: 端口 443，密码自动生成"
+            info "Trojan: 端口 62333，密码自动生成"
         else
-            trojan_port=$(read_input "Trojan 端口" "443")
+            trojan_port=$(read_input "Trojan 端口" "62333")
             trojan_pass=$(read_input "Trojan 密码（回车自动生成）" "")
             [[ -z "$trojan_pass" ]] && trojan_pass=$(gen_password)
         fi
@@ -201,30 +201,39 @@ install_main() {
     echo ""
     title "申请 SSL 证书"
     local cert_dir="$CERT_DIR/$domain"
+    local acme_webroot="/var/www/html"
+    mkdir -p "$cert_dir" "$acme_webroot"
+    if ! systemctl is-active nginx &>/dev/null; then
+        systemctl start nginx 2>/dev/null || true
+    fi
 
     if [[ -f "$cert_dir/fullchain.pem" ]]; then
         info "证书已存在: $cert_dir"
         if ! confirm "是否重新申请？"; then
             info "使用现有证书"
         else
-            ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
+            ~/.acme.sh/acme.sh --issue --server letsencrypt -d "$domain" -w "$acme_webroot" --force
             ~/.acme.sh/acme.sh --install-cert -d "$domain" \
                 --fullchain-file "$cert_dir/fullchain.pem" \
                 --key-file "$cert_dir/privkey.pem"
         fi
     else
         info "正在申请证书..."
-        mkdir -p "$cert_dir"
-        ~/.acme.sh/acme.sh --issue -d "$domain" --standalone
+        ~/.acme.sh/acme.sh --issue --server letsencrypt -d "$domain" -w "$acme_webroot"
         if [[ $? -eq 0 ]]; then
             ~/.acme.sh/acme.sh --install-cert -d "$domain" \
                 --fullchain-file "$cert_dir/fullchain.pem" \
                 --key-file "$cert_dir/privkey.pem"
-            success "证书申请成功"
         else
-            error "证书申请失败，请检查域名是否已解析到本机"
+            error "证书申请失败，请检查域名解析、80 端口和 Nginx 默认站点是否可公网访问"
             return 1
         fi
+    fi
+    if [[ -s "$cert_dir/fullchain.pem" && -s "$cert_dir/privkey.pem" ]]; then
+        success "证书已安装到 $cert_dir"
+    else
+        error "证书安装失败，未找到 $cert_dir/fullchain.pem 或 privkey.pem"
+        return 1
     fi
 
     # 4. 安装 sing-box
@@ -341,18 +350,54 @@ install_sing_box() {
 
     local tmp_dir
     tmp_dir=$(mktemp -d)
-    cd "$tmp_dir" || return 1
+    local old_pwd
+    old_pwd=$(pwd)
+    cd "$tmp_dir" || {
+        rm -rf "$tmp_dir"
+        return 1
+    }
 
     curl -fsSL "$url" -o sing-box.tar.gz
     if [[ $? -ne 0 ]]; then
         error "下载 sing-box 失败"
+        cd "$old_pwd" || true
         rm -rf "$tmp_dir"
         return 1
     fi
 
-    tar xzf sing-box.tar.gz
-    cp "sing-box-${ver}-linux-${arch}/sing-box" "$SING_BOX_BIN"
+    if ! tar xzf sing-box.tar.gz; then
+        error "解压 sing-box 失败"
+        cd "$old_pwd" || true
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    if ! cp "sing-box-${ver}-linux-${arch}/sing-box" "$SING_BOX_BIN"; then
+        error "安装 sing-box 二进制失败"
+        cd "$old_pwd" || true
+        rm -rf "$tmp_dir"
+        return 1
+    fi
     chmod +x "$SING_BOX_BIN"
+    cat > /etc/systemd/system/sing-box.service <<SERVICEEOF
+[Unit]
+Description=sing-box service
+Documentation=https://sing-box.sagernet.org
+After=network.target nss-lookup.target
+
+[Service]
+User=root
+WorkingDirectory=/etc/sing-box
+ExecStart=${SING_BOX_BIN} run -c ${SING_BOX_CONFIG}
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+    systemctl daemon-reload
+    cd "$old_pwd" || true
     rm -rf "$tmp_dir"
 
     success "sing-box ${ver} 已安装到 $SING_BOX_BIN"
@@ -401,8 +446,6 @@ JSONEOF
       "listen": "::",
       "listen_port": ${trojan_port},
       "tcp_fast_open": true,
-      "sniff": true,
-      "sniff_override_destination": true,
       "users": [
         {
           "password": "${trojan_pass}"
@@ -429,8 +472,6 @@ JSONEOF
       "listen": "::",
       "listen_port": ${vmess_port},
       "tcp_fast_open": true,
-      "sniff": true,
-      "sniff_override_destination": true,
       "users": [
         {
           "uuid": "${vmess_uuid}",
@@ -466,8 +507,6 @@ JSONEOF
       "listen": "::",
       "listen_port": ${vless_port},
       "tcp_fast_open": true,
-      "sniff": true,
-      "sniff_override_destination": true,
       "users": [
         {
           "uuid": "${vless_uuid}",
@@ -507,8 +546,6 @@ JSONEOF
       "listen": "::",
       "listen_port": ${hy2_port},
       "tcp_fast_open": true,
-      "sniff": true,
-      "sniff_override_destination": true,
       "up_mbps": 100,
       "down_mbps": 500,
       "users": [
@@ -534,10 +571,6 @@ JSONEOF
     {
       "type": "direct",
       "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
     }
   ]
 }
@@ -554,9 +587,24 @@ configure_nginx() {
     local token="${4:-}"
 
     mkdir -p "$WEB_DIR"
+    ensure_web_auth
     generate_manual_page "$domain" "$port" "$token"
 
     cat > "/etc/nginx/sites-available/sub-box" << NGINXEOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
 server {
     listen ${port} ssl http2;
     listen [::]:${port} ssl http2;
@@ -570,8 +618,26 @@ server {
     root ${WEB_DIR};
     index index.html;
 
-    location / {
+    location = / {
+        auth_basic "sub-box manual";
+        auth_basic_user_file ${WEB_AUTH_FILE};
+        try_files /index.html =404;
+    }
+
+    location = /index.html {
+        auth_basic "sub-box manual";
+        auth_basic_user_file ${WEB_AUTH_FILE};
+        try_files /index.html =404;
+    }
+
+    location /clients/ {
+        auth_basic "sub-box manual";
+        auth_basic_user_file ${WEB_AUTH_FILE};
         try_files \$uri \$uri/ =404;
+    }
+
+    location / {
+        try_files \$uri =404;
     }
 
     # 禁用访问日志（订阅请求量大）
@@ -580,6 +646,14 @@ server {
 NGINXEOF
 
     ln -sf "/etc/nginx/sites-available/sub-box" "/etc/nginx/sites-enabled/" 2>/dev/null
+}
+
+ensure_web_auth() {
+    if [[ ! -f "$WEB_AUTH_FILE" ]]; then
+        mkdir -p "$(dirname "$WEB_AUTH_FILE")"
+        printf '%s:%s\n' "$WEB_AUTH_USER" "$(openssl passwd -apr1 admin)" > "$WEB_AUTH_FILE"
+        chmod 644 "$WEB_AUTH_FILE"
+    fi
 }
 
 # ==========================================
@@ -607,7 +681,11 @@ generate_manual_page() {
         v2rayn_file="${V2RAYN_FILE:-}"
     fi
     [[ -z "$token" ]] && token="{Token}"
-    sub_url="https://${domain}:${port}/${token}"
+    if [[ "$port" == "443" ]]; then
+        sub_url="https://${domain}/${token}"
+    else
+        sub_url="https://${domain}:${port}/${token}"
+    fi
     local v2rayng_href="#"
     local v2rayn_href="#"
     [[ -n "$v2rayng_file" ]] && v2rayng_href="/clients/${v2rayng_file}"
@@ -882,7 +960,9 @@ generate_manual_page() {
         var hostname = window.location.hostname || "${domain}";
         var currentPort = window.location.port || "${port}";
         var host = hostname;
-        if (currentPort) host += ":" + currentPort;
+        if (currentPort && !((protocol === "https:" && currentPort === "443") || (protocol === "http:" && currentPort === "80"))) {
+          host += ":" + currentPort;
+        }
         target.textContent = protocol + "//" + host + "/" + token;
       }
       if (copyButton && navigator.clipboard) {
