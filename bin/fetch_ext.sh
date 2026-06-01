@@ -1,11 +1,15 @@
 #!/bin/bash
+# ==========================================
+# sub-box v2.0 — 机场节点抓取（按地区测速选最快）
+# ==========================================
 
-# --- 核心修改：从外部文件读取链接 ---
 URL_FILE="/opt/subscribe/airport_url.txt"
 EXT_FILE="/opt/subscribe/extend.ini"
-KEYWORD="台湾" 
-MAX_NODES=2
 
+# 地区配置: "关键词:最大节点数"（按 TCP 延迟升序，取最快的 N 个）
+REGIONS=("台湾:1" "日本:1")
+
+# ---- 下载 & 解码 ----
 if [ ! -f "$URL_FILE" ]; then
     echo "--- 提示：未检测到 $URL_FILE，跳过抓取 ---"
     exit 0
@@ -15,14 +19,11 @@ if [ -z "$SUB_URL" ]; then
     echo "--- 提示：airport_url.txt 为空，跳过抓取 ---"
     exit 0
 fi
-# ----------------------------------
 
-echo "--- 正在同步机场节点 (安全解码模式) ---"
+echo "--- 正在同步机场节点 ($(date)) ---"
 
-# 1. 下载订阅内容
 encoded_content=$(curl -fsSL --max-time 30 "$SUB_URL" 2>/tmp/sub_box_fetch_error)
-curl_rc=$?
-if [ $curl_rc -ne 0 ]; then
+if [ $? -ne 0 ]; then
     echo "❌ 下载订阅失败，请检查链接或网络"
     cat /tmp/sub_box_fetch_error 2>/dev/null
     rm -f /tmp/sub_box_fetch_error
@@ -30,39 +31,106 @@ if [ $curl_rc -ne 0 ]; then
 fi
 rm -f /tmp/sub_box_fetch_error
 
-# 2. 解码 Base64
-decode_error=$(mktemp)
-raw_content=$(printf '%s' "$encoded_content" | tr -d '\r' | base64 -d 2>"$decode_error")
-decode_rc=$?
-if [ $decode_rc -ne 0 ]; then
+decode_tmp=$(mktemp)
+raw_content=$(printf '%s' "$encoded_content" | tr -d '\r' | base64 -d 2>"$decode_tmp")
+if [ $? -ne 0 ]; then
     echo "❌ 订阅内容不是有效 Base64，或供应商返回了非订阅页面"
-    cat "$decode_error" 2>/dev/null
-    rm -f "$decode_error"
+    cat "$decode_tmp" 2>/dev/null; rm -f "$decode_tmp"
     exit 1
 fi
-rm -f "$decode_error"
+rm -f "$decode_tmp"
 
 if [ -z "$raw_content" ]; then
     echo "❌ 解码后内容为空"
     exit 1
 fi
 
-# 3. 将 URL 编码还原为中文并筛选
-selected_nodes=$(echo "$raw_content" | python3 -c "import sys, urllib.parse; [print(urllib.parse.unquote(line.strip())) for line in sys.stdin]" | grep "$KEYWORD" | head -n $MAX_NODES)
+# ---- TCP 测速 ----
+tcp_latency() {
+    local start end
+    start=$(date +%s%N)
+    if timeout 3 bash -c "echo >/dev/tcp/$1/$2" 2>/dev/null; then
+        end=$(date +%s%N)
+        echo $(( (end - start) / 1000000 ))
+    else
+        echo ""
+    fi
+}
 
-if [ -z "$selected_nodes" ]; then
-    echo "⚠️ 匹配不到包含 [$KEYWORD] 的节点"
+# ---- 主逻辑 ----
+echo "[nodes]" > "$EXT_FILE"
+node_tmp=$(mktemp)
+total_selected=0
+
+for region_config in "${REGIONS[@]}"; do
+    keyword="${region_config%%:*}"
+    max_nodes="${region_config##*:}"
+
+    echo "--- 地区: $keyword (最多 $max_nodes 个) ---"
+
+    # 解析该地区所有节点，去重 host:port（同 endpoint 只测一次）
+    printf '%s' "$raw_content" | python3 -c "
+import sys, urllib.parse, re
+kw = sys.argv[1]
+skip_kw = ['剩余流量', '下次重置', '套餐到期', '距离下次']
+for line in sys.stdin:
+    line = line.strip()
+    if not line or '#' not in line:
+        continue
+    decoded = urllib.parse.unquote(line)
+    # 跳过非节点的信息行
+    if any(k in decoded for k in skip_kw):
+        continue
+    if kw not in decoded:
+        continue
+    link, remark = decoded.split('#', 1)
+    m = re.search(r'@([^:]+):(\d+)', link)
+    if m and m.group(1) != '127.0.0.1':
+        print(f'{m.group(1)}\t{m.group(2)}\t{link}\t{remark}')
+" "$keyword" | sort -t$'\t' -u -k1,2 > "$node_tmp"
+
+    if [ ! -s "$node_tmp" ]; then
+        echo "  ⚠️ 无匹配节点"
+        continue
+    fi
+
+    # 逐个测速
+    speed_tmp=$(mktemp)
+    while IFS=$'\t' read -r host port link remark; do
+        [ -z "$host" ] && continue
+        lat=$(tcp_latency "$host" "$port")
+        if [ -n "$lat" ]; then
+            echo "${lat}"$'\t'"${host}:${port}"$'\t'"${link}"$'\t'"${remark}" >> "$speed_tmp"
+            echo "  ${host}:${port}  ${lat}ms"
+        else
+            echo "  ${host}:${port}  TIMEOUT"
+        fi
+    done < "$node_tmp"
+
+    if [ ! -s "$speed_tmp" ]; then
+        echo "  ⚠️ 所有节点超时"
+        rm -f "$speed_tmp"
+        continue
+    fi
+
+    # 取最快的 N 个，每个 host:port 选一条代表链接写入
+    sort -t$'\t' -k1 -n "$speed_tmp" | head -n "$max_nodes" | while IFS=$'\t' read -r lat hostport link remark; do
+        echo "${link}|机场-${keyword}" >> "$EXT_FILE"
+        echo "  ✅ 选中 ${hostport} (${lat}ms)"
+    done
+
+    # 计数（write 在 subshell 里，从文件统计）
+    count=$(sort -t$'\t' -k1 -n "$speed_tmp" | head -n "$max_nodes" | wc -l | tr -d ' ')
+    total_selected=$((total_selected + count))
+    rm -f "$speed_tmp"
+done
+
+rm -f "$node_tmp"
+
+if [ "$total_selected" -gt 0 ]; then
+    echo "✅ 抓取完成，共 $total_selected 个节点，已写入 $EXT_FILE"
+    exit 0
+else
+    echo "⚠️ 未选出任何可用节点，$EXT_FILE 未更新"
     exit 1
 fi
-
-# 4. 写入 extend.ini
-echo "[nodes]" > "$EXT_FILE"
-
-# 5. 追加节点并格式化
-while read -r node; do
-    [ -z "$node" ] && continue
-    link="${node%%#*}"
-    echo "${link}|机场-${KEYWORD}" >> "$EXT_FILE"
-done <<< "$selected_nodes"
-
-echo "✅ 成功抓取并更新至 $EXT_FILE"

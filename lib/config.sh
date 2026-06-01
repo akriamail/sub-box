@@ -377,26 +377,25 @@ config_manage_airport() {
 config_fetch_settings() {
     title "修改抓取设置"
 
-    local ext_file="$SUB_BOX_DIR/extend.ini"
-
-    local keyword
-    local max_nodes
-    keyword=$(grep '^KEYWORD=' "$SUB_BOX_BIN_DIR/fetch_ext.sh" | cut -d'"' -f2)
-    max_nodes=$(grep '^MAX_NODES=' "$SUB_BOX_BIN_DIR/fetch_ext.sh" | cut -d'=' -f2)
-
-    info "当前关键词: $keyword"
-    info "最大节点数: $max_nodes"
+    local regions_line
+    regions_line=$(grep '^REGIONS=' "$SUB_BOX_BIN_DIR/fetch_ext.sh" | head -1)
+    info "当前配置: $regions_line"
+    info "格式: REGIONS=(\"关键词:最大节点数\" ...)"
 
     echo ""
-    local new_keyword
-    new_keyword=$(read_input "新关键词（如: 台湾、香港、日本）" "$keyword")
-    local new_max
-    new_max=$(read_input "最大节点数" "$max_nodes")
+    echo "示例:"
+    echo "  REGIONS=(\"台湾:1\" \"日本:1\")              ← 台湾+日本，各取最快 1 个"
+    echo "  REGIONS=(\"台湾:2\" \"香港:1\" \"日本:1\")    ← 加香港"
+    echo ""
 
-    sed -i 's/^KEYWORD=".*"/KEYWORD="'"$new_keyword"'"/' "$SUB_BOX_BIN_DIR/fetch_ext.sh"
-    sed -i 's/^MAX_NODES=[0-9]*/MAX_NODES='"$new_max"'/' "$SUB_BOX_BIN_DIR/fetch_ext.sh"
-
-    success "已更新"
+    local new_regions
+    new_regions=$(read_input "新配置（回车保持不变）" "")
+    if [ -n "$new_regions" ]; then
+        sed -i "s/^REGIONS=.*/REGIONS=${new_regions}/" "$SUB_BOX_BIN_DIR/fetch_ext.sh"
+        success "已更新"
+    else
+        info "未修改"
+    fi
 
     if confirm "立即触发抓取？"; then
         bash "$SUB_BOX_BIN_DIR/fetch_ext.sh"
