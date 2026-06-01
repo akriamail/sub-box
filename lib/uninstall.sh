@@ -4,6 +4,9 @@
 # ==========================================
 
 uninstall_main() {
+    local mode
+    mode=$(detect_mode)
+
     title "卸载 sub-box"
 
     echo -e "${RED}╔═══════════════════════════════════════════════╗${NC}"
@@ -15,12 +18,17 @@ uninstall_main() {
     # 列出将要卸载的组件
     echo "将执行以下操作:"
     echo "  1. 停止 sing-box 服务并禁用开机自启"
-    echo "  2. 停止 nginx 订阅站点（保留 nginx 本身）"
-    echo "  3. 停止 update.sh 进程"
-    echo "  4. 删除 ${SUB_BOX_DIR} 目录"
-    echo "  5. 删除 ${WEB_DIR} 订阅文件目录"
-    echo "  6. 删除 Nginx 站点配置"
-    echo "  7. 移除 crontab 任务"
+    if [[ "$mode" == "full" ]]; then
+        echo "  2. 停止 nginx 订阅站点（保留 nginx 本身）"
+        echo "  3. 停止 update.sh 进程"
+        echo "  4. 删除 ${SUB_BOX_DIR} 目录"
+        echo "  5. 删除 ${WEB_DIR} 订阅文件目录"
+        echo "  6. 删除 Nginx 站点配置"
+        echo "  7. 移除 crontab 任务"
+    else
+        echo "  2. 删除 ${SUB_BOX_DIR} 目录"
+        echo "  3. 移除 acme.sh 续期任务"
+    fi
     echo ""
     echo "  可选保留:"
     echo "  - SSL 证书 (保留可复用)"
@@ -55,57 +63,48 @@ uninstall_main() {
     info "停止服务..."
     systemctl stop sing-box 2>/dev/null
     systemctl disable sing-box 2>/dev/null
-    pkill -f "$SUB_BOX_BIN_DIR/update.sh" 2>/dev/null
-    pkill -f "inotifywait.*$SUB_BOX_DIR" 2>/dev/null
+    if [[ "$mode" == "full" ]]; then
+        pkill -f "$SUB_BOX_BIN_DIR/update.sh" 2>/dev/null
+        pkill -f "inotifywait.*$SUB_BOX_DIR" 2>/dev/null
+    fi
     success "服务已停止"
 
-    # 2. 移除 Nginx 订阅站点
-    echo ""
-    info "清理 Nginx 配置..."
-    rm -f "/etc/nginx/sites-enabled/sub-box"
-    rm -f "/etc/nginx/sites-available/sub-box"
-    systemctl reload nginx 2>/dev/null
-    success "Nginx 配置已清理"
+    # 2. 清理 Nginx（仅 full 模式）
+    if [[ "$mode" == "full" ]]; then
+        echo ""
+        info "清理 Nginx 配置..."
+        rm -f "/etc/nginx/sites-enabled/sub-box"
+        rm -f "/etc/nginx/sites-available/sub-box"
+        systemctl reload nginx 2>/dev/null
+        success "Nginx 配置已清理"
+    fi
 
-    # 3. 可选：保留证书
+    # 3. 可选保留项
     echo ""
     local keep_cert=true
-    if confirm "保留 SSL 证书？" "Y"; then
-        keep_cert=true
-        info "证书已保留"
-    else
-        keep_cert=false
-    fi
+    confirm "保留 SSL 证书？" "Y" && keep_cert=true || keep_cert=false
 
-    # 4. 可选：保留 sing-box
     local keep_singbox=true
-    if confirm "保留 sing-box 二进制？" "Y"; then
-        keep_singbox=true
-    else
-        keep_singbox=false
-    fi
+    confirm "保留 sing-box 二进制？" "Y" && keep_singbox=true || keep_singbox=false
 
-    # 5. 可选：保留 acme.sh
     local keep_acme=true
-    if confirm "保留 acme.sh？" "Y"; then
-        keep_acme=true
-    else
-        keep_acme=false
+    confirm "保留 acme.sh？" "Y" && keep_acme=true || keep_acme=false
+
+    # 4. 删除订阅文件目录（仅 full）
+    if [[ "$mode" == "full" ]]; then
+        echo ""
+        info "清理订阅文件..."
+        rm -rf "$WEB_DIR"
+        success "订阅文件已删除"
     fi
 
-    # 6. 删除订阅文件目录
-    echo ""
-    info "清理订阅文件..."
-    rm -rf "$WEB_DIR"
-    success "订阅文件已删除"
-
-    # 7. 删除 sub-box 目录
+    # 5. 删除 sub-box 目录
     echo ""
     info "清理 sub-box 目录..."
     rm -rf "$SUB_BOX_DIR"
     success "sub-box 目录已删除"
 
-    # 8. 删除证书（如果不保留）
+    # 6. 删除证书
     if ! $keep_cert; then
         echo ""
         info "删除 SSL 证书..."
@@ -118,7 +117,7 @@ uninstall_main() {
         fi
     fi
 
-    # 9. 删除 sing-box（如果不保留）
+    # 7. 删除 sing-box
     if ! $keep_singbox; then
         echo ""
         info "删除 sing-box..."
@@ -128,7 +127,7 @@ uninstall_main() {
         success "sing-box 已删除"
     fi
 
-    # 10. 删除 acme.sh（如果不保留）
+    # 8. 删除 acme.sh
     if ! $keep_acme; then
         echo ""
         info "删除 acme.sh..."
@@ -136,12 +135,12 @@ uninstall_main() {
         success "acme.sh 已删除"
     fi
 
-    # 11. 移除 crontab 相关任务
+    # 9. 清理 crontab
     echo ""
     info "清理 crontab..."
     local cron_tmp
     cron_tmp=$(mktemp)
-    (crontab -l 2>/dev/null | grep -v "update.sh" | grep -v "fetch_ext.sh") > "$cron_tmp" 2>/dev/null
+    (crontab -l 2>/dev/null | grep -v "update.sh" | grep -v "fetch_ext.sh" | grep -v "acme.sh") > "$cron_tmp" 2>/dev/null
     crontab "$cron_tmp" 2>/dev/null
     rm -f "$cron_tmp"
     success "crontab 已清理"
@@ -161,7 +160,9 @@ uninstall_main() {
     fi
     echo ""
     warn "如要完全清理，可手动删除:"
-    $keep_singbox || echo "  - $SING_BOX_BIN"
+    if ! $keep_singbox; then
+        echo "  已删除 sing-box"
+    fi
     echo "  - /var/log/sing-box.log"
     echo ""
 

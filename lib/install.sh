@@ -21,6 +21,16 @@ install_main() {
     fi
     success "系统: $os $(detect_arch)"
 
+    # ---------- 全量/代理模式选择 ----------
+    title "部署模式"
+    echo "  full   订阅分发服务器：sing-box 多协议入站 + Nginx 订阅分发 + 节点管理"
+    echo "  proxy  代理节点：sing-box 单协议代理，无订阅/Web 功能"
+    echo ""
+    if ! confirm "使用 full 模式（订阅分发）？" "Y"; then
+        install_proxy_main
+        return 0
+    fi
+
     # ---------- 域名输入与验证 ----------
     title "域名配置"
     echo "请输入用于订阅服务的域名"
@@ -50,8 +60,8 @@ install_main() {
         fi
     done
 
-    # ---------- 安装模式选择 ----------
-    title "安装模式"
+    # ---------- 配置方式 ----------
+    title "配置方式"
     local use_defaults=true
     if ! confirm "使用默认配置快速安装？" "Y"; then
         use_defaults=false
@@ -291,6 +301,10 @@ install_main() {
     # 8. 确保脚本可执行
     chmod +x "$SUB_BOX_DIR"/*.sh "$SUB_BOX_BIN_DIR"/*.sh "$SUB_BOX_DIR"/lib/*.sh 2>/dev/null
 
+    # 8b. 写入模式标记
+    mkdir -p "$SUB_BOX_DIR"
+    echo "full" > "$SUB_BOX_MODE_FILE"
+
     # 9. 设置 crontab
     echo ""
     title "设置定时任务"
@@ -335,18 +349,9 @@ install_sing_box() {
     local arch
     arch=$(detect_arch)
 
-    info "下载 sing-box ($arch)..."
-    local tag
-    tag=$(curl -fsSL https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null | \
-          grep '"tag_name":' | cut -d'"' -f4)
-
-    if [[ -z "$tag" ]]; then
-        error "获取 sing-box 最新版本失败"
-        return 1
-    fi
-
-    local ver="${tag#v}"
-    local url="https://github.com/SagerNet/sing-box/releases/download/${tag}/sing-box-${ver}-linux-${arch}.tar.gz"
+    info "下载 sing-box ${SING_BOX_VERSION} ($arch)..."
+    local tag="v${SING_BOX_VERSION}"
+    local url="https://github.com/SagerNet/sing-box/releases/download/${tag}/sing-box-${SING_BOX_VERSION}-linux-${arch}.tar.gz"
 
     local tmp_dir
     tmp_dir=$(mktemp -d)
@@ -371,7 +376,7 @@ install_sing_box() {
         rm -rf "$tmp_dir"
         return 1
     fi
-    if ! cp "sing-box-${ver}-linux-${arch}/sing-box" "$SING_BOX_BIN"; then
+    if ! cp "sing-box-${SING_BOX_VERSION}-linux-${arch}/sing-box" "$SING_BOX_BIN"; then
         error "安装 sing-box 二进制失败"
         cd "$old_pwd" || true
         rm -rf "$tmp_dir"
@@ -400,7 +405,7 @@ SERVICEEOF
     cd "$old_pwd" || true
     rm -rf "$tmp_dir"
 
-    success "sing-box ${ver} 已安装到 $SING_BOX_BIN"
+    success "sing-box ${SING_BOX_VERSION} 已安装到 $SING_BOX_BIN"
 }
 
 # ==========================================
@@ -1057,4 +1062,258 @@ setup_crontab() {
     echo "0 3 * * * /bin/bash $SUB_BOX_BIN_DIR/fetch_ext.sh > /dev/null 2>&1" >> "$cron_tmp"
     crontab "$cron_tmp"
     rm -f "$cron_tmp"
+}
+
+# ==========================================
+# proxy 模式安装
+# ==========================================
+install_proxy_main() {
+    title "sub-box v2.0 代理节点安装"
+
+    # ---- 域名 ----
+    title "域名配置"
+    echo "请输入代理节点的域名"
+    echo "例如: lax.akria.net"
+    echo ""
+
+    local domain
+    while :; do
+        read -r -p "域名: " domain
+        [[ -z "$domain" ]] && error "域名不能为空" && continue
+
+        if confirm "是否验证域名 DNS 解析？"; then
+            if check_dns "$domain"; then
+                break
+            else
+                warn "DNS 验证失败，可选择："
+                echo "  1) 重新输入域名"
+                echo "  2) 跳过验证继续安装"
+                read -r -p "请选择 [1/2]: " dns_choice
+                if [[ "$dns_choice" == "2" ]]; then
+                    warn "已跳过 DNS 验证"
+                    break
+                fi
+            fi
+        else
+            break
+        fi
+    done
+
+    # ---- 协议选择 (单选) ----
+    title "协议选择"
+    echo "  1. Trojan       (TLS/TCP 默认 443)"
+    echo "  2. VMess        (TLS/TCP 默认 8443)"
+    echo "  3. VLESS+Reality (默认 8444)"
+    echo "  4. Hysteria2    (QUIC/UDP 默认 8445)"
+    echo ""
+    read -r -p "请选择 [1-4]: " proto_choice
+    local proto=""
+    case "$proto_choice" in
+        1) proto="trojan" ;;
+        2) proto="vmess" ;;
+        3) proto="vless" ;;
+        4) proto="hysteria2" ;;
+        *) error "无效选择"; return 1 ;;
+    esac
+
+    # ---- 端口和认证 ----
+    title "参数配置"
+    local port pass uuid
+    case "$proto" in
+        trojan)
+            port=$(read_input "端口" "443")
+            pass=$(read_input "密码（回车自动生成 16 位 hex）" "")
+            [[ -z "$pass" ]] && pass=$(gen_password)
+            info "Trojan: 端口 $port"
+            ;;
+        vmess)
+            port=$(read_input "端口" "8443")
+            uuid=$(read_input "UUID（回车自动生成）" "")
+            [[ -z "$uuid" ]] && uuid=$(gen_uuid)
+            info "VMess: 端口 $port"
+            ;;
+        vless)
+            port=$(read_input "端口" "8444")
+            uuid=$(read_input "UUID（回车自动生成）" "")
+            [[ -z "$uuid" ]] && uuid=$(gen_uuid)
+            info "VLESS+Reality: 端口 $port"
+            ;;
+        hysteria2)
+            port=$(read_input "端口" "8445")
+            pass=$(read_input "密码（回车自动生成 16 位 hex）" "")
+            [[ -z "$pass" ]] && pass=$(gen_password)
+            info "Hysteria2: 端口 $port (UDP)"
+            ;;
+    esac
+
+    # ---- 确认 ----
+    title "安装概要"
+    echo "  域名:    $domain"
+    echo "  协议:    $proto"
+    echo "  端口:    $port"
+    echo "  认证:    ${pass:-$uuid}"
+    echo ""
+    if ! confirm "确认安装？"; then
+        warn "安装已取消"
+        return 1
+    fi
+
+    # ========== 执行安装 ==========
+    title "开始安装"
+
+    # 1. 系统依赖
+    echo ""
+    info "安装系统依赖..."
+    apt update
+    apt install -y curl wget uuid-runtime coreutils cron openssl
+    success "系统依赖已安装"
+
+    # 2. acme.sh
+    echo ""
+    title "安装 acme.sh"
+    if command -v ~/.acme.sh/acme.sh &>/dev/null; then
+        success "acme.sh 已安装"
+    else
+        info "正在安装 acme.sh..."
+        curl -fsSL https://get.acme.sh | bash
+        if [[ $? -eq 0 ]]; then
+            success "acme.sh 安装成功"
+        else
+            error "acme.sh 安装失败"
+            return 1
+        fi
+    fi
+
+    # 3. SSL 证书 (standalone 模式，无需 nginx)
+    echo ""
+    title "申请 SSL 证书"
+    local cert_dir="$CERT_DIR/$domain"
+    mkdir -p "$cert_dir"
+
+    if [[ -f "$cert_dir/fullchain.pem" ]]; then
+        info "证书已存在: $cert_dir"
+        if confirm "是否重新申请？"; then
+            ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+                --fullchain-file "$cert_dir/fullchain.pem" \
+                --key-file "$cert_dir/privkey.pem"
+        else
+            info "使用现有证书"
+        fi
+    else
+        info "正在申请证书 (standalone 模式)..."
+        ~/.acme.sh/acme.sh --issue -d "$domain" --standalone
+        if [[ $? -eq 0 ]]; then
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+                --fullchain-file "$cert_dir/fullchain.pem" \
+                --key-file "$cert_dir/privkey.pem"
+        else
+            error "证书申请失败，请检查域名解析和 80 端口是否可公网访问"
+            return 1
+        fi
+    fi
+    if [[ -s "$cert_dir/fullchain.pem" && -s "$cert_dir/privkey.pem" ]]; then
+        success "证书已安装到 $cert_dir"
+    else
+        error "证书安装失败"
+        return 1
+    fi
+
+    # 4. sing-box
+    echo ""
+    title "安装 sing-box"
+    if command -v sing-box &>/dev/null; then
+        local sb_ver
+        sb_ver=$(sing-box version 2>/dev/null | head -1)
+        info "sing-box 已安装: $sb_ver"
+        if ! confirm "是否重新安装/升级？"; then
+            info "跳过 sing-box 安装"
+        else
+            install_sing_box
+        fi
+    else
+        install_sing_box
+    fi
+
+    # 5. 生成 sing-box 配置
+    echo ""
+    title "生成 sing-box 配置"
+    local e_trojan=false e_vmess=false e_vless=false e_hy2=false
+    local tp=62333 vp=8443 vlp=8444 hp=8445
+    local tpass="" vuuid="" vluuid="" hpass=""
+
+    case "$proto" in
+        trojan)    e_trojan=true; tp="$port"; tpass="$pass" ;;
+        vmess)     e_vmess=true;  vp="$port"; vuuid="$uuid" ;;
+        vless)     e_vless=true;  vlp="$port"; vluuid="$uuid" ;;
+        hysteria2) e_hy2=true;    hp="$port"; hpass="$pass" ;;
+    esac
+
+    generate_sing_box_config \
+        "$e_trojan" "$tp" "$tpass" \
+        "$e_vmess" "$vp" "$vuuid" \
+        "$e_vless" "$vlp" "$vluuid" \
+        "$e_hy2" "$hp" "$hpass" \
+        "$domain" "$cert_dir"
+    success "sing-box 配置已生成"
+
+    # 6. 生成 config.ini
+    echo ""
+    title "生成配置文件"
+    mkdir -p "$SUB_BOX_DIR"
+    cat > "$SUB_BOX_DIR/config.ini" << INIEOF
+[common]
+domain = ${domain}
+cert_domain = ${domain}
+cert_path = ${cert_dir}/fullchain.pem
+key_path = ${cert_dir}/privkey.pem
+
+[proxy]
+protocol = ${proto}
+port = ${port}
+INIEOF
+    case "$proto" in
+        trojan|hysteria2)
+            echo "password = ${pass}" >> "$SUB_BOX_DIR/config.ini" ;;
+        vmess|vless)
+            echo "uuid = ${uuid}" >> "$SUB_BOX_DIR/config.ini"
+            if [[ "$proto" == "vless" && -n "${REALITY_PUBKEY:-}" ]]; then
+                echo "reality_pubkey = ${REALITY_PUBKEY}" >> "$SUB_BOX_DIR/config.ini"
+            fi
+            ;;
+    esac
+    success "config.ini 已生成"
+
+    # 7. 确保脚本可执行
+    chmod +x "$SUB_BOX_DIR"/*.sh "$SUB_BOX_BIN_DIR"/*.sh "$SUB_BOX_DIR"/lib/*.sh 2>/dev/null
+
+    # 8. 写入模式标记
+    echo "proxy" > "$SUB_BOX_MODE_FILE"
+
+    # 9. 设置 acme 续期
+    info "设置 acme.sh 自动续期..."
+
+    # 10. 启动服务
+    echo ""
+    title "启动服务"
+    systemctl daemon-reload
+    systemctl enable sing-box
+    systemctl restart sing-box
+
+    # 完成
+    echo ""
+    title "✅ 安装完成"
+    echo ""
+    echo "  ├─ 管理命令: bash $SUB_BOX_DIR/manager.sh"
+    echo "  ├─ 域名:     $domain"
+    echo "  ├─ 协议:     $proto"
+    echo "  ├─ 端口:     $port"
+    echo "  └─ 认证:     ${pass:-$uuid}"
+    echo ""
+
+    if [[ "$proto" == "vless" ]]; then
+        info "VLESS+Reality 客户端需配置以下公钥："
+        echo "  PublicKey: ${REALITY_PUBKEY:-（查看 config.ini）}"
+        echo "  ServerName: $domain"
+    fi
 }

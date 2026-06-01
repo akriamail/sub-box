@@ -5,7 +5,7 @@
 # 基于 sing-box 的全协议订阅聚合管理工具
 # ==========================================
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -21,13 +21,21 @@ done
 # 主菜单
 # ==========================================
 main_menu() {
+    local mode
+    mode=$(detect_mode)
+
     while :; do
         clear 2>/dev/null || true
 
         echo ""
         echo -e "${CYAN}╔═══════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║          sub-box v${VERSION} 管理器            ║${NC}"
-        echo -e "${CYAN}║    全协议订阅聚合 · sing-box 引擎          ║${NC}"
+        if [[ "$mode" == "full" ]]; then
+            echo -e "${CYAN}║          sub-box v${VERSION} 管理器            ║${NC}"
+            echo -e "${CYAN}║    全协议订阅聚合 · sing-box 引擎          ║${NC}"
+        else
+            echo -e "${CYAN}║          sub-box v${VERSION} 代理管理器        ║${NC}"
+            echo -e "${CYAN}║      sing-box 代理节点 · 一键管理          ║${NC}"
+        fi
         echo -e "${CYAN}╚═══════════════════════════════════════════╝${NC}"
         echo ""
 
@@ -38,27 +46,42 @@ main_menu() {
         fi
 
         if $installed; then
-            echo -e "  ${GREEN}■${NC} 状态: 已安装"
-            local domain port
+            echo -e "  ${GREEN}■${NC} 状态: 已安装 ($([[ "$mode" == "full" ]] && echo '订阅分发' || echo '代理节点'))"
+            local domain
             domain=$(grep '^domain =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
-            port=$(grep '^port =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
             [[ -n "$domain" ]] && echo -e "  ${CYAN}■${NC} 域名: $domain"
-            [[ -n "$port" ]] && echo -e "  ${CYAN}■${NC} 端口: $port"
+            if [[ "$mode" == "full" ]]; then
+                local port
+                port=$(grep '^port =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+                [[ -n "$port" ]] && echo -e "  ${CYAN}■${NC} 订阅端口: $port"
+            fi
         else
             echo -e "  ${YELLOW}■${NC} 状态: 未安装"
         fi
         echo ""
 
-        echo "  ┌─────────────────────────────────────┐"
-        echo "  │  1. 初始化安装                        │"
-        echo "  │  2. 修改配置                          │"
-        echo "  │  3. 查看状态                          │"
-        echo "  │  4. 卸载                              │"
-        echo "  │  5. 刷新客户端版本                    │"
-        echo "  │  0. 退出                              │"
-        echo "  └─────────────────────────────────────┘"
-        echo ""
-        read -r -p "  请选择 [0-5]: " choice
+        if [[ "$mode" == "full" ]]; then
+            echo "  ┌─────────────────────────────────────┐"
+            echo "  │  1. 初始化安装                        │"
+            echo "  │  2. 修改配置                          │"
+            echo "  │  3. 查看状态                          │"
+            echo "  │  4. 卸载                              │"
+            echo "  │  5. 刷新客户端版本                    │"
+            echo "  │  0. 退出                              │"
+            echo "  └─────────────────────────────────────┘"
+            echo ""
+            read -r -p "  请选择 [0-5]: " choice
+        else
+            echo "  ┌─────────────────────────────────────┐"
+            echo "  │  1. 初始化安装                        │"
+            echo "  │  2. 修改配置                          │"
+            echo "  │  3. 查看状态                          │"
+            echo "  │  4. 卸载                              │"
+            echo "  │  0. 退出                              │"
+            echo "  └─────────────────────────────────────┘"
+            echo ""
+            read -r -p "  请选择 [0-4]: " choice
+        fi
 
         case "$choice" in
             1) install_main ;;
@@ -68,11 +91,22 @@ main_menu() {
                     read -r -p "按回车继续..."
                     continue
                 fi
-                config_main
+                if [[ "$mode" == "full" ]]; then
+                    config_main
+                else
+                    config_proxy
+                fi
                 ;;
             3) status_main ;;
             4) uninstall_main ;;
-            5) refresh_clients_main ;;
+            5)
+                if [[ "$mode" == "full" ]]; then
+                    refresh_clients_main
+                else
+                    error "无效选择"
+                    sleep 1
+                fi
+                ;;
             0)
                 echo ""
                 info "再见！"

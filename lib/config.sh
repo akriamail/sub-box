@@ -633,3 +633,104 @@ config_web_auth() {
     success "Web 手册登录密码已更新"
     read -r -p "按回车继续..."
 }
+
+# ==========================================
+# proxy 模式配置菜单
+# ==========================================
+config_proxy() {
+    while :; do
+        clear 2>/dev/null || true
+        title "修改配置 (代理节点)"
+
+        local proto port pass uuid
+        proto=$(grep '^protocol =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+        port=$(grep '^port =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+        pass=$(grep '^password =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+        uuid=$(grep '^uuid =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+
+        echo -e "  ${CYAN}协议:${NC} $proto"
+        echo -e "  ${CYAN}端口:${NC} $port"
+        if [[ -n "$pass" ]]; then
+            echo -e "  ${CYAN}密码:${NC} ${pass:0:6}..."
+        elif [[ -n "$uuid" ]]; then
+            echo -e "  ${CYAN}UUID:${NC} ${uuid:0:12}..."
+        fi
+        echo ""
+
+        echo "  1. 修改端口"
+        echo "  2. 重新生成密码/UUID"
+        echo "  3. 修改域名 / 重新申请证书"
+        echo "  4. 查看 sing-box 配置"
+        echo "  5. 重启 sing-box"
+        echo "  6. 重新安装 sing-box"
+        echo "  0. 返回主菜单"
+        echo ""
+        read -r -p "请选择 [0-6]: " choice
+
+        case "$choice" in
+            1) config_proxy_port ;;
+            2) config_proxy_rotate_secret ;;
+            3) config_domain ;;
+            4)
+                cat "$SING_BOX_CONFIG" 2>/dev/null || error "配置不存在"
+                read -r -p "按回车继续..."
+                ;;
+            5)
+                systemctl restart sing-box
+                systemctl status sing-box --no-pager -l | head -10
+                read -r -p "按回车继续..."
+                ;;
+            6) config_reinstall_singbox ;;
+            0) return 0 ;;
+            *) error "无效选择" ;;
+        esac
+    done
+}
+
+config_proxy_port() {
+    local proto port
+    proto=$(grep '^protocol =' "$SUB_BOX_DIR/config.ini" | cut -d'=' -f2- | tr -d ' ')
+    port=$(grep '^port =' "$SUB_BOX_DIR/config.ini" | cut -d'=' -f2- | tr -d ' ')
+    info "当前协议: $proto, 端口: $port"
+
+    local new_port
+    new_port=$(read_input "新端口" "$port")
+    [[ "$new_port" == "$port" ]] && return 0
+
+    sed -i "s/^port = .*/port = $new_port/" "$SUB_BOX_DIR/config.ini"
+    sed -i "s/\"listen_port\": [0-9]*/\"listen_port\": $new_port/" "$SING_BOX_CONFIG"
+    systemctl restart sing-box
+    success "端口已更新为 $new_port"
+    read -r -p "按回车继续..."
+}
+
+config_proxy_rotate_secret() {
+    local proto pass uuid domain cert_dir
+    proto=$(grep '^protocol =' "$SUB_BOX_DIR/config.ini" | cut -d'=' -f2- | tr -d ' ')
+    domain=$(grep '^domain =' "$SUB_BOX_DIR/config.ini" | cut -d'=' -f2- | tr -d ' ')
+    cert_dir="$CERT_DIR/$domain"
+
+    warn "将重新生成认证凭据，旧凭据立即失效"
+    confirm "确认？" || return 1
+
+    case "$proto" in
+        trojan|hysteria2)
+            pass=$(gen_password)
+            sed -i "s/^password = .*/password = $pass/" "$SUB_BOX_DIR/config.ini"
+            sed -i "s/\"password\": \"[^\"]*\"/\"password\": \"$pass\"/" "$SING_BOX_CONFIG"
+            success "新密码: $pass"
+            ;;
+        vmess|vless)
+            uuid=$(gen_uuid)
+            sed -i "s/^uuid = .*/uuid = $uuid/" "$SUB_BOX_DIR/config.ini"
+            sed -i "s/\"uuid\": \"[^\"]*\"/\"uuid\": \"$uuid\"/" "$SING_BOX_CONFIG"
+            if [[ "$proto" == "vless" ]]; then
+                sed -i "s/\"uuid\": \"[^\"]*\"/\"uuid\": \"$uuid\"/" "$SING_BOX_CONFIG"
+            fi
+            success "新 UUID: $uuid"
+            ;;
+    esac
+
+    systemctl restart sing-box
+    read -r -p "按回车继续..."
+}

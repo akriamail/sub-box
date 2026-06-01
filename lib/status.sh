@@ -4,6 +4,8 @@
 # ==========================================
 
 status_main() {
+    local mode
+    mode=$(detect_mode)
     title "sub-box 系统状态"
 
     # ── 系统 ──
@@ -42,8 +44,11 @@ status_main() {
     # 显示 sing-box 监听端口
     if command -v ss &>/dev/null; then
         local ports
-        ports=$(ss -tlnp | grep sing-box | awk '{print $4}' | awk -F: '{print $NF}' | sort -n | tr '\n' ', ' | sed 's/,$//')
-        [[ -n "$ports" ]] && echo "  监听:     $ports"
+        ports=$(ss -tlnp 2>/dev/null | grep sing-box | awk '{print $4}' | awk -F: '{print $NF}' | sort -n | tr '\n' ', ' | sed 's/,$//')
+        local udp_ports
+        udp_ports=$(ss -ulnp 2>/dev/null | grep sing-box | awk '{print $5}' | awk -F: '{print $NF}' | sort -n | tr '\n' ', ' | sed 's/,$//')
+        [[ -n "$ports" ]] && echo "  监听 TCP: $ports"
+        [[ -n "$udp_ports" ]] && echo "  监听 UDP: $udp_ports"
     fi
 
     # ── 证书 ──
@@ -78,7 +83,25 @@ status_main() {
         echo -e "  证书:     ${RED}未找到${NC}"
     fi
 
-    # ── Nginx ──
+    # ── proxy 模式：显示代理信息 ──
+    if [[ "$mode" == "proxy" ]]; then
+        echo ""
+        echo -e "${CYAN}── 代理 ──────────────────────────────${NC}"
+        local proto port pass uuid
+        proto=$(grep '^protocol =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+        port=$(grep '^port =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+        pass=$(grep '^password =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+        uuid=$(grep '^uuid =' "$SUB_BOX_DIR/config.ini" 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
+        echo "  协议:     $proto"
+        echo "  端口:     $port"
+        [[ -n "$pass" ]] && echo "  密码:     ${pass:0:6}..."
+        [[ -n "$uuid" ]] && echo "  UUID:     ${uuid:0:12}..."
+        echo ""
+        read -r -p "按回车键返回菜单..."
+        return 0
+    fi
+
+    # ── Nginx ── (full mode only)
     echo ""
     echo -e "${CYAN}── Nginx ─────────────────────────────${NC}"
     if systemctl is-active nginx &>/dev/null; then
@@ -87,7 +110,7 @@ status_main() {
         echo -e "  状态:     ${RED}● 未运行${NC}"
     fi
 
-    # ── 节点 ──
+    # ── 节点 ── (full mode only)
     echo ""
     echo -e "${CYAN}── 节点 ──────────────────────────────${NC}"
 

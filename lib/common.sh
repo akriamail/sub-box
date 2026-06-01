@@ -149,6 +149,26 @@ CLIENTS_DIR="$WEB_DIR/clients"
 CLIENTS_META="$CLIENTS_DIR/clients.env"
 WEB_AUTH_FILE="$SUB_BOX_DIR/web.htpasswd"
 WEB_AUTH_USER="admin"
+SING_BOX_VERSION="1.13.12"
 SING_BOX_CONFIG="/etc/sing-box/config.json"
 SING_BOX_BIN="/usr/local/bin/sing-box"
 CERT_DIR="/root/cert"
+
+# ---------- 模式 ----------
+SUB_BOX_MODE_FILE="$SUB_BOX_DIR/.mode"
+
+detect_mode() {
+    if [[ -f "$SUB_BOX_MODE_FILE" ]]; then
+        tr -d '\n\r ' < "$SUB_BOX_MODE_FILE"
+    else
+        # 存量安装无 .mode 文件，通过 config.ini 推断
+        if [[ -f "$SUB_BOX_DIR/config.ini" ]] && grep -q '^token =' "$SUB_BOX_DIR/config.ini" 2>/dev/null; then
+            echo "full"
+        else
+            echo "proxy"
+        fi
+    fi
+}
+
+is_full()  { [[ "$(detect_mode)" == "full" ]]; }
+is_proxy() { [[ "$(detect_mode)" == "proxy" ]]; }

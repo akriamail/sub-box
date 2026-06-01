@@ -20,7 +20,10 @@ git clone https://github.com/akriamail/sub-box.git /opt/subscribe
 bash /opt/subscribe/manager.sh
 ```
 
-选择 **1. 初始化安装**，然后：
+选择 **1. 初始化安装**，然后选择部署模式：
+
+- **full** — 订阅分发服务器：sing-box 多协议入站 + Nginx 订阅分发 + 节点管理
+- **proxy** — 代理节点：sing-box 单协议代理，轻量无订阅功能。适合纯代理主机
 
 ```
 输入域名 → 选协议 → 默认配置（密码/UUID/Token 全自动）→ 完成
@@ -50,6 +53,8 @@ bash /opt/subscribe/manager.sh
 ```
 
 ## Manager 菜单详解
+
+### full 模式（订阅分发）
 
 ### 1. 初始化安装
 
@@ -91,6 +96,25 @@ bash /opt/subscribe/manager.sh
 ### 4. 卸载
 
 二次确认后才执行，可选保留 SSL 证书、sing-box 二进制、acme.sh。
+
+### proxy 模式（代理节点）
+
+精简菜单，专注于单协议代理节点管理：
+
+| # | 功能 | 说明 |
+|---|------|------|
+| 1 | 修改端口 | 更新 sing-box 监听端口 |
+| 2 | 重新生成密码/UUID | 旧凭据立即失效 |
+| 3 | 修改域名 / 重新申请证书 | DNS 验证 + acme.sh standalone |
+| 4 | 查看 sing-box 配置 | 输出当前 `config.json` |
+| 5 | 重启 sing-box | |
+| 6 | 重新安装 sing-box | 升级到固定版本（见下方） |
+
+## sing-box 版本
+
+版本号固定在 `lib/common.sh`：`SING_BOX_VERSION="1.13.12"`
+
+升级时修改该常量，在各主机执行 `bash manager.sh` → 配置 → 重新安装 sing-box 即可。
 
 ## 协议默认配置
 
