@@ -5,3 +5,4 @@
 *.save
 *.tmp
 token.txt
+web/node_modules/
