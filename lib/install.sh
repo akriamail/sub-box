@@ -188,7 +188,7 @@ install_main() {
     echo ""
     info "安装系统依赖..."
     apt update
-    apt install -y curl wget nginx uuid-runtime coreutils cron python3 bind9-dnsutils dnsutils openssl inotify-tools
+    apt install -y curl wget nginx uuid-runtime coreutils cron python3 python3-venv bind9-dnsutils dnsutils openssl inotify-tools
     success "系统依赖已安装"
 
     # 2. 安装 acme.sh
@@ -279,6 +279,13 @@ install_main() {
     configure_nginx "$domain" "$sub_port" "$cert_dir" "$sub_token"
     success "Nginx 已配置"
 
+    # 6b. 配置 Web 控制台
+    echo ""
+    title "配置 Web 控制台"
+    install_dashboard
+    bash "$SUB_BOX_BIN_DIR/prepare_artifacts.sh"
+    success "Web 控制台已配置"
+
     if confirm "是否立即下载 Android/Windows 客户端到本机镜像？"; then
         if bash "$SUB_BOX_BIN_DIR/refresh_clients.sh"; then
             generate_manual_page "$domain" "$sub_port" "$sub_token"
@@ -316,7 +323,9 @@ install_main() {
     title "启动服务"
     systemctl daemon-reload
     systemctl enable sing-box
+    systemctl enable sub-box-dashboard
     systemctl restart sing-box
+    systemctl restart sub-box-dashboard
     systemctl restart nginx
 
     # 启动 update.sh
@@ -328,6 +337,8 @@ install_main() {
     title "✅ 安装完成"
     echo ""
     echo "  ├─ 管理命令: bash $SUB_BOX_DIR/manager.sh"
+    echo "  ├─ 控制台:   https://$domain:$sub_port/admin/"
+    echo "  ├─ Token:    $SUB_BOX_DIR/.dashboard-token"
     echo "  ├─ 订阅链接: https://$domain:$sub_port/$sub_token"
     echo "  └─ 节点密码: 已保存至 $SUB_BOX_DIR/config.ini"
     echo ""
@@ -406,6 +417,38 @@ SERVICEEOF
     rm -rf "$tmp_dir"
 
     success "sing-box ${SING_BOX_VERSION} 已安装到 $SING_BOX_BIN"
+}
+
+# ==========================================
+# 安装 Dashboard 服务
+# ==========================================
+install_dashboard() {
+    local venv_dir="$SUB_BOX_DIR/.venv"
+
+    python3 -m venv "$venv_dir"
+    "$venv_dir/bin/pip" install --upgrade pip >/dev/null
+    "$venv_dir/bin/pip" install fastapi uvicorn pydantic >/dev/null
+
+    if [[ ! -f "$SUB_BOX_DIR/.dashboard-token" ]]; then
+        gen_token > "$SUB_BOX_DIR/.dashboard-token"
+        chmod 600 "$SUB_BOX_DIR/.dashboard-token"
+    fi
+
+    cat > /etc/systemd/system/sub-box-dashboard.service <<SERVICEEOF
+[Unit]
+Description=sub-box dashboard
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=${SUB_BOX_DIR}
+ExecStart=${venv_dir}/bin/python ${SUB_BOX_DIR}/bin/dashboard.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
 }
 
 # ==========================================
@@ -622,6 +665,40 @@ server {
 
     root ${WEB_DIR};
     index index.html;
+
+    location /admin/ {
+        auth_basic "sub-box admin";
+        auth_basic_user_file ${WEB_AUTH_FILE};
+        proxy_pass http://127.0.0.1:9190/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:9190/api/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /install/ {
+        proxy_pass http://127.0.0.1:9190/install/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /artifacts/ {
+        proxy_pass http://127.0.0.1:9190/artifacts/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
 
     location = / {
         auth_basic "sub-box manual";

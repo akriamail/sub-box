@@ -1,17 +1,18 @@
-# sub-box v2.0
+# sub-box v2.1
 
-一键部署、交互式管理的全协议订阅聚合工具。基于 **sing-box** + **acme.sh**，自带 Manager 面板。
+一键部署、交互式管理的全协议订阅聚合工具。基于 **sing-box** + **acme.sh**，自带 Manager CLI 和 Web Dashboard。
 
-## 为什么是 v2.0？
+## 为什么是 v2.x？
 
 | | v1.x | v2.0 |
 |--|------|------|
 | 底层 | X-UI（带 Web 面板，重） | **sing-box**（单二进制 ~20MB，无依赖） |
 | 证书 | 手动申请、手动续期 | **acme.sh** 自动申请 + 自动续期 |
-| 管理 | 手写 .ini、手敲命令 | **交互菜单**：安装/修改/状态/卸载 |
+| 管理 | 手写 .ini、手敲命令 | **交互菜单 + Web Dashboard**：安装/修改/状态/节点 |
 | 密码 | 手动设置 | **自动生成**，也可自定义 |
 | 安全 | 订阅链接固定不变 | **Token 可重生成**，旧链接立即失效 |
 | 域名 | 随你便 | **DNS 验证**，证书申请前先检查解析 |
+| 多节点 | SSH 到每台机器改配置 | **Agent 控制面**，server 生成安装命令后统一控制 |
 
 ## 快速安装
 
@@ -40,7 +41,10 @@ bash /opt/subscribe/manager.sh
 │   ├── sub-box.sh       # Manager 主程序
 │   ├── update.sh        # 订阅聚合引擎（常驻进程）
 │   ├── fetch_ext.sh     # 机场节点抓取
-│   └── refresh_clients.sh # 客户端安装包刷新
+│   ├── refresh_clients.sh # 客户端安装包刷新
+│   ├── dashboard.py     # Web Dashboard 后端
+│   ├── agent.py         # 受控 agent daemon
+│   └── prepare_artifacts.sh # server 端 sing-box 制品准备
 ├── lib/
 │   ├── common.sh        # 公共函数（颜色、密码生成、DNS 验证）
 │   ├── install.sh       # 安装全流程
@@ -49,7 +53,9 @@ bash /opt/subscribe/manager.sh
 │   └── uninstall.sh     # 卸载（可选保留项）
 ├── config.ini           # 自建节点（受 .gitignore 保护）
 ├── airport_url.txt      # 机场订阅链接（受 .gitignore 保护）
-└── extend.ini           # 抓取到的机场节点（受 .gitignore 保护）
+├── extend.ini           # 抓取到的机场节点（受 .gitignore 保护）
+├── state/               # Dashboard / agent 状态（受 .gitignore 保护）
+└── artifacts/           # server 托管 sing-box 二进制（受 .gitignore 保护）
 ```
 
 ## Manager 菜单详解
@@ -143,8 +149,55 @@ bash /opt/subscribe/manager.sh
 
 - `config.ini`：自建节点、手动添加的远端代理节点
 - `extend.ini`：从机场订阅抽取的节点
+- `state/agent_nodes.ini`：已登记 agent 自动生成的节点
 
 管理菜单可统一展示两类节点，支持修改客户端里显示的名称。手动添加节点时，如果代理主机不是本机，可以填写实际 Host/IP；留空则默认使用订阅域名。
+
+## Agent 控制面（开发中）
+
+server 端 Web 控制台可以生成一次性安装命令：
+
+```bash
+curl -fsSL https://server.example.com:8080/install/<token> | bash
+```
+
+agent 主机执行后会：
+
+1. 安装依赖，从 server 下载固定版本 sing-box，并安装 `sub-box-agent` systemd 服务
+2. 使用一次性 token 向 server 登记，换取长期 agent token
+3. 周期拉取 desired config，应用协议/端口/密码变更
+4. 上报 CPU、内存、磁盘、网络收发速率、sing-box 状态和证书剩余天数
+5. server 自动把已登记 agent 写入 `state/agent_nodes.ini` 并刷新订阅
+
+状态文件：
+
+```text
+/opt/subscribe/state/agents.json          # server: agent desired/reported 状态
+/opt/subscribe/state/install_tokens.json  # server: 一次性安装 token
+/opt/subscribe/state/agent_nodes.ini      # server: 订阅合成用 agent 节点
+/opt/subscribe/state/agent.json           # agent: 本机长期凭据和 revision
+```
+
+当前 agent 采用主动拉取模型，不需要 server SSH 到 agent；agent 在 NAT 或防火墙后也能受控。
+
+server 端通过以下脚本准备 agent 安装所需二进制，agent 不直接访问 GitHub：
+
+```bash
+bash /opt/subscribe/bin/prepare_artifacts.sh
+```
+
+分发路径：
+
+```text
+/artifacts/sing-box/linux/amd64
+/artifacts/sing-box/linux/arm64
+/artifacts/sha256sums.txt
+```
+
+设计与接口细节见：
+
+- `docs/dashboard-design.md`
+- `docs/enrollment.md`
 
 ## 客户端下载镜像
 
@@ -192,6 +245,13 @@ bash /opt/subscribe/bin/refresh_clients.sh
 - 依赖：安装时自动安装 curl、wget、nginx、acme.sh、sing-box
 
 ## Changelog
+
+### v2.1（2026-06）
+
+- 新增 Web Dashboard 原型：Dashboard / Nodes / Agents / Airport。
+- 新增 agent 一键安装闭环：install token、`/install/<token>`、agent 登记、desired config 拉取、metrics 上报。
+- 新增 server 托管 sing-box 制品，agent 安装不直接依赖 GitHub。
+- 订阅聚合新增 `state/agent_nodes.ini` 输入。
 
 ### v2.0（2025-04）
 

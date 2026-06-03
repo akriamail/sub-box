@@ -78,7 +78,7 @@ process_nodes() {
     fi
 
     combined_content=""
-    for ini_file in "$CONFIG_DIR"/*.ini; do
+    for ini_file in "$CONFIG_DIR"/*.ini "$CONFIG_DIR"/state/*.ini; do
         if [ -f "$ini_file" ]; then
             content=$(sed -n '/^\[nodes\]/,$p' "$ini_file" | grep -Ev '^\[|^#|^$')
             combined_content+="$content"$'\n'

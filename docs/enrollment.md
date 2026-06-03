@@ -1,252 +1,225 @@
-# 节点登记同步系统 — 需求文档
+# Agent 登记与受控安装设计
 
-> 草案 v1 / 2026-06-01
+> v2 / 2026-06-03
 
-## 愿景
+## 目标
 
-server 一台（hk2 full 模式），多台 proxy 从 server 拿登记 token 自动推送节点信息，server 自动生成订阅。改密码、改端口、改域名后自动同步。
+server 端新增一台 agent 时，生成一条带一次性 token 的安装命令。把命令 SSH 粘贴到 agent 主机后，agent 自动安装受控系统、登记到 server、拉取配置并上报状态；后续不再需要 SSH 到 agent，端口、协议、密码、订阅节点和基础监控都由 server 控制台统一管理。
 
-```
-                ┌─────────────────────┐
-   proxy lax ──▶│  POST /enroll       │
-   (trojan)     │  X-Enroll-Token: x  │
-                │                     │──▶ 写入 config.ini [nodes]
-   proxy hk ───▶│  Nginx :8080        │──▶ 触发 update.sh
-   (hysteria2)  │  (hk2 full 模式)    │──▶ 订阅文件重新生成
-                └─────────────────────┘
-```
-
-## 一、登记流程
-
-```
-┌─ Server (hk2) ─┐                   ┌─ Proxy (lax/hk) ─┐
-│  1. 生成 Token  │                   │                   │
-│                 │  2. 安装时输入    │                   │
-│                 │◀── Token + URL ──│ 3. 安装完成后     │
-│                 │                   │    POST 节点信息  │
-│  4. 写入 nodes  │                   │                   │
-│  5. 更新订阅    │                   │                   │
-│                 │  6. 后续变更      │                   │
-│                 │◀── POST 同步 ────│ 端口/密码变更     │
-└─────────────────┘                   └───────────────────┘
+```text
+Dashboard 生成 install token
+        |
+        v
+curl -fsSL https://server/install/<token> | bash
+        |
+        v
+agent 下载 server 托管的 sing-box + agent.py
+        |
+        v
+POST /api/agents/enroll 换长期 agent token
+        |
+        v
+GET /api/agents/config 拉 desired config
+        |
+        v
+POST /api/agents/report 上报运行状态
 ```
 
-## 二、API 设计
+## 模型选择
 
-### 登记端点
+当前采用 **agent 主动拉取模型**：
 
+- server 不 SSH 到 agent，也不保存 agent 的 SSH 凭据。
+- agent 周期访问 server，适合 NAT、防火墙后主机。
+- server 只保存 desired state；agent 自己负责应用配置和重启 sing-box。
+- 安装时只使用一次性 install token，登记后换取长期 agent token。
+
+这比旧草案里的 `/enroll` 表单同步更稳：server 可以统一管理 desired config、metrics、订阅合成和安装二进制版本。
+
+## 安装流程
+
+### 1. server 生成安装 token
+
+```http
+POST /api/agents/install-token
+X-Dashboard-Token: <dashboard-token>
 ```
-POST /enroll
-```
 
-**Headers**：
-
-| Header | 说明 |
-|--------|------|
-| `X-Enroll-Token` | 32 位 hex 登记令牌 |
-| `X-Node-Host` | 主机名（如 lax） |
-
-**Body**（application/x-www-form-urlencoded）：
-
-| 字段 | 必填 | 示例 |
-|------|------|------|
-| `action` | ✅ | `register` / `update` / `heartbeat` |
-| `domain` | ✅ | `lax.akria.net` |
-| `protocol` | ✅ | `trojan` |
-| `port` | ✅ | `443` |
-| `password` | * | `z1a2q3W4`（trojan/hy2） |
-| `uuid` | * | `xxx-xxx-xxx`（vmess/vless） |
-| `remark` | | `自建.LAX.AI.only` |
-| `pubkey` | | Reality 公钥（vless） |
-| `node_uri` | | 完整 URI（与字段模式互斥） |
-
-两种提交模式：
-- **字段模式**：逐个传 domain/protocol/port 等，server 拼成节点 URI
-- **URI 模式**：只传 `node_uri` 和 `remark`，server 直接写入
-
-### 响应
+请求体示例：
 
 ```json
-{"ok": true, "action": "registered", "node_count": 6}
-{"ok": true, "action": "updated", "node_count": 6}
-{"ok": false, "error": "invalid token"}
-```
-
-### 心跳
-
-```
-POST /enroll
-X-Enroll-Token: xxx
-action=heartbeat
-```
-
-Server 记录心跳时间戳，不修改节点配置。Manager 面板可查看各节点最后心跳。
-
-## 三、Server 端改动
-
-### 3.1 登记令牌
-
-```
-/opt/subscribe/.enroll-token    32位hex，manager 可重生成
-/opt/subscribe/.enroll-state    节点状态文件（hostname → 最后心跳）
-```
-
-### 3.2 Nginx 配置
-
-`/enroll` 路径不收 Basic Auth 限制，但需要验 `X-Enroll-Token`：
-
-```nginx
-location /enroll {
-    # 由 shell CGI 处理，内部验 token
-    fastcgi_pass unix:/var/run/enroll.sock;  # 或直接 proxy_pass
+{
+  "name": "worker2",
+  "protocol": "vmess",
+  "listen_port": 8443,
+  "domain": "subbox.worker.akria.net"
 }
 ```
 
-或者更简单：Nginx 直接 `proxy_pass` 给一个本地 fastapi/flask 小服务，由它验 token、写 ini、触发 update.sh。
+响应包含：
 
-### 3.3 处理逻辑（`bin/handle_enroll.sh` 或 Python）
-
-1. 读 `X-Enroll-Token`，比对 `.enroll-token`
-2. 验证 `action` 参数
-3. `register`：按 hostname 去重写入 config.ini `[nodes]`
-4. `update`：按 hostname 找到旧行，替换
-5. `heartbeat`：更新 `.enroll-state` 时间戳
-6. 触发 `update.sh`（touch config.ini 触发 inotifywait）
-
-### 3.4 Manager 菜单新增
-
-```
-7. 管理已登记节点
-   ├─ 1. 查看登记列表（hostname / 域名 / 协议 / 最后心跳）
-   ├─ 2. 查看单节点详情
-   ├─ 3. 删除登记节点
-   ├─ 4. 重新生成登记 Token（旧 Token 立即失效）
-   └─ 0. 返回
+```json
+{
+  "token": "<one-time-token>",
+  "install_url": "https://subbox.server.akria.net/install/<token>",
+  "command": "curl -fsSL https://subbox.server.akria.net/install/<token> | bash"
+}
 ```
 
-### 3.5 字段/URI 写入格式
+### 2. agent 执行安装命令
 
-写入 `config.ini` 的 `[nodes]` 段：
-
-```
-# 格式: 链接|备注  #enrolled=<hostname> <timestamp>
-trojan://xxx@lax.akria.net:443...|自建.LAX.AI.only  #enrolled=lax 2026-06-01T12:00:00Z
-```
-
-`#enrolled=` 注释用于去重和状态追踪，不影响 `update.sh` 解析（`#` 后的内容被忽略）。
-
-## 四、Proxy 端改动
-
-### 4.1 安装流程
-
-```
-域名 → 协议 → 端口/密码 → 确认
-   │
-   ├─ "是否登记到订阅服务器？[Y/n]"
-   │     ├─ 服务器地址: [hk2.changuoo.com:8080]
-   │     ├─ 登记 Token:  [粘贴]
-   │     └─ 节点备注:    [自建.LAX.AI.only]
-   │
-   └─ 安装完成后 → POST /enroll
-```
-
-### 4.2 配置变更自动同步
+agent 主机上只需要执行：
 
 ```bash
-# lib/config.sh config_proxy_* 函数末尾加：
-if [[ -f "$SUB_BOX_DIR/.enroll-server" ]]; then
-    post_enrollment "update"
-fi
+curl -fsSL https://subbox.server.akria.net/install/<token> | bash
 ```
 
-### 4.3 本地状态
+脚本完成：
 
-```
-/opt/subscribe/.enroll-server   服务器地址（如 hk2.changuoo.com:8080）
-/opt/subscribe/.enroll-token    登记 Token（从 server 拿到的那份）
-```
+1. 安装 Python venv、curl、ca-certificates 等基础依赖。
+2. 从 server `/artifacts/` 下载固定版本 `sing-box`，不直接访问 GitHub。
+3. 安装 `bin/agent.py`。
+4. 写入本机初始状态。
+5. 在 systemd 环境创建并启动 `sub-box-agent.service`。
+6. 在非 systemd 测试容器内降级为直接进程模式。
 
-## 五、安全
+### 3. agent 登记
 
-- 登记 Token 通过 Manager 菜单手动输入，不落 `.gitignore`（已在 gitignore 中 `*.ini` `*.txt`，token 文件同理）
-- Token 支持随时重生成，旧 Token 立即失效
-- 建议后续加 IP 白名单（仅允许已知 proxy IP）
-- 通信走 HTTPS（server 已有 SSL 证书）
-
-## 六、测试计划
-
-### prod 集群 Ubuntu Pod 测试
-
-```
-┌─ prod k3s ──────────────────────────┐
-│                                      │
-│  ┌─────────────────────┐             │
-│  │ sub-box-server      │             │
-│  │ image: ubuntu:22.04 │             │
-│  │ + sub-box full 模式 │             │
-│  │ NodePort :30808     │             │
-│  └─────────────────────┘             │
-│              ▲                       │
-│              │ POST /enroll          │
-│  ┌───────────┴─────────┐             │
-│  │ sub-box-client      │             │
-│  │ image: ubuntu:22.04 │             │
-│  │ + sub-box proxy 模式│             │
-│  └─────────────────────┘             │
-│                                      │
-└──────────────────────────────────────┘
+```http
+POST /api/agents/enroll
+X-Install-Token: <one-time-token>
 ```
 
-**测试步骤**：
+agent 提交 hostname、arch、os、版本等信息。server 校验一次性 token 后返回：
 
-1. 两个 Ubuntu Pod，分别 `apt update && apt install curl git`
-2. Server Pod 跑 `manager.sh` → full 模式安装
-3. Client Pod 跑 `manager.sh` → proxy 模式安装，输入 server 地址和登记 token
-4. 验证：查看 server 的 config.ini 是否自动新增了 client 节点
-5. 测试：client 改密码 → 验证 server 是否自动同步
-6. 测试：删除登记节点 → client 重新登记
-
-### Pod manifest（参考）
-
-```yaml
-# manifests/apps/sub-box-test/server.yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: sub-box-server
-  namespace: default
-  labels:
-    app: sub-box-server
-spec:
-  containers:
-  - name: ubuntu
-    image: ubuntu:22.04
-    command: ["sleep", "infinity"]
-    ports:
-    - containerPort: 8080
-      name: enroll
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: sub-box-server
-spec:
-  type: NodePort
-  selector:
-    app: sub-box-server
-  ports:
-  - port: 8080
-    nodePort: 30808
+```json
+{
+  "agent_id": "worker2",
+  "agent_token": "<long-lived-token>",
+  "desired": {
+    "protocol": "vmess",
+    "listen_port": 8443,
+    "domain": "subbox.worker.akria.net"
+  }
+}
 ```
 
-## 七、实现阶段
+一次性 token 登记后标记为 used，不再重复使用。
 
-| 阶段 | 内容 | 优先级 |
-|------|------|--------|
-| P1 | Server 端 `.enroll-token` + Nginx `/enroll` 端点 + 写入逻辑 | 核心 |
-| P1 | Proxy 端安装时登记流程 + 安装后 POST | 核心 |
-| P2 | Server Manager「管理已登记节点」面板 | 面板 |
-| P2 | Proxy 配置变更自动同步 | 自动化 |
-| P2 | 心跳机制 + 状态展示 | 可观测 |
-| P3 | Prod 集群 Pod 测试 | 验证 |
-| P3 | IP 白名单 | 安全加固 |
+### 4. agent 拉取 desired config
+
+```http
+GET /api/agents/config
+X-Agent-Id: worker2
+X-Agent-Token: <long-lived-token>
+```
+
+server 返回 revision 与 desired config。agent 发现 revision 变化后重写：
+
+```text
+/etc/sing-box/config.json
+```
+
+并重启 sing-box。
+
+### 5. agent 上报状态
+
+```http
+POST /api/agents/report
+X-Agent-Id: worker2
+X-Agent-Token: <long-lived-token>
+```
+
+上报内容包括：
+
+- CPU 使用率与负载。
+- 内存、磁盘使用率。
+- 网络 rx/tx 总量和 bps 速率。
+- sing-box 运行状态与版本。
+- TLS 证书剩余天数、证书域名。
+- last_apply_ok / last_apply_error。
+- 当前 applied revision。
+
+server 根据 report 自动刷新 `state/agent_nodes.ini`，订阅聚合时会读入该文件。
+
+## API 一览
+
+| API | 调用方 | 说明 |
+|---|---|---|
+| `POST /api/agents/install-token` | Dashboard | 生成一次性安装 token 与命令 |
+| `GET /install/{token}` | agent shell | 返回安装脚本 |
+| `POST /api/agents/enroll` | agent | 使用 install token 换长期凭据 |
+| `GET /api/agents/config` | agent | 拉取 desired config |
+| `POST /api/agents/report` | agent | 上报 metrics 和应用结果 |
+| `PATCH /api/agents/{id}/desired` | Dashboard | 修改端口、协议、密码、域名等 desired state |
+
+## 状态文件
+
+server：
+
+```text
+/opt/subscribe/state/install_tokens.json  # 一次性安装 token
+/opt/subscribe/state/agents.json          # agent desired/reported 状态
+/opt/subscribe/state/agent_nodes.ini      # 订阅合成用节点
+```
+
+agent：
+
+```text
+/opt/subscribe/state/agent.json           # agent_id、agent_token、server_url、revision
+/etc/sing-box/config.json                 # 当前 sing-box 配置
+```
+
+这些文件均不进入 Git。
+
+## server 托管 sing-box
+
+server 端固定准备 sing-box 版本，agent 从 server 下载：
+
+```bash
+bash /opt/subscribe/bin/prepare_artifacts.sh
+```
+
+分发路径：
+
+```text
+/artifacts/sing-box/linux/amd64
+/artifacts/sing-box/linux/arm64
+/artifacts/sha256sums.txt
+```
+
+这样 agent 安装不依赖 GitHub 可达性，也避免不同 agent 自动装到不同 sing-box 版本。
+
+## 订阅同步
+
+`bin/update.sh` 会读取：
+
+```text
+config.ini
+extend.ini
+state/agent_nodes.ini
+```
+
+因此 agent 成功登记和上报后，server 会把 agent 节点合成进订阅文件。Dashboard 修改 desired config 后，agent 应用成功并上报，订阅端随之更新。
+
+## 安全边界
+
+- install token 一次性使用，建议设置过期时间。
+- agent token 长期保存，仅用于该 agent。
+- Dashboard token 与订阅 token 分离。
+- `/install/` 和 `/artifacts/` 对安装流程开放，但 sensitive state 不暴露。
+- 后续可加：install token TTL、agent token rotate、IP allowlist、审计日志。
+
+## 测试记录
+
+2026-06-03 在 prod k3s 的 `subbox-test` namespace 验证：
+
+- server：`subbox-server`，域名 `subbox.server.akria.net`。
+- worker：`subbox-worker`，域名 `subbox.worker.akria.net`。
+- server 已能生成安装命令。
+- worker 已通过 `/install/<token>` 安装，sing-box 从 server `/artifacts/` 下载。
+- worker 在 Pod 非 systemd 环境下使用进程模式启动 agent。
+- server 收到 worker report，包含 CPU、内存、磁盘、网络、证书、sing-box 状态。
+- `state/agent_nodes.ini` 已生成，订阅解码后包含 server 节点和 worker 节点。
+
+测试 Pod 不是真实 systemd init 环境，systemd service 安装路径仍需在真实 Ubuntu/Debian VPS 上再做一次端到端验证。

@@ -6,3 +6,8 @@
 *.tmp
 token.txt
 web/node_modules/
+state/
+artifacts/
+.dashboard-token
+.enroll-token
+.agent-venv/

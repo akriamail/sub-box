@@ -20,11 +20,12 @@ uninstall_main() {
     echo "  1. 停止 sing-box 服务并禁用开机自启"
     if [[ "$mode" == "full" ]]; then
         echo "  2. 停止 nginx 订阅站点（保留 nginx 本身）"
-        echo "  3. 停止 update.sh 进程"
-        echo "  4. 删除 ${SUB_BOX_DIR} 目录"
-        echo "  5. 删除 ${WEB_DIR} 订阅文件目录"
-        echo "  6. 删除 Nginx 站点配置"
-        echo "  7. 移除 crontab 任务"
+        echo "  3. 停止 Web 控制台服务"
+        echo "  4. 停止 update.sh 进程"
+        echo "  5. 删除 ${SUB_BOX_DIR} 目录"
+        echo "  6. 删除 ${WEB_DIR} 订阅文件目录"
+        echo "  7. 删除 Nginx 站点配置"
+        echo "  8. 移除 crontab 任务"
     else
         echo "  2. 删除 ${SUB_BOX_DIR} 目录"
         echo "  3. 移除 acme.sh 续期任务"
@@ -64,6 +65,8 @@ uninstall_main() {
     systemctl stop sing-box 2>/dev/null
     systemctl disable sing-box 2>/dev/null
     if [[ "$mode" == "full" ]]; then
+        systemctl stop sub-box-dashboard 2>/dev/null
+        systemctl disable sub-box-dashboard 2>/dev/null
         pkill -f "$SUB_BOX_BIN_DIR/update.sh" 2>/dev/null
         pkill -f "inotifywait.*$SUB_BOX_DIR" 2>/dev/null
     fi
@@ -75,6 +78,8 @@ uninstall_main() {
         info "清理 Nginx 配置..."
         rm -f "/etc/nginx/sites-enabled/sub-box"
         rm -f "/etc/nginx/sites-available/sub-box"
+        rm -f /etc/systemd/system/sub-box-dashboard.service
+        systemctl daemon-reload
         systemctl reload nginx 2>/dev/null
         success "Nginx 配置已清理"
     fi

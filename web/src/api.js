@@ -21,6 +21,9 @@ async function req(method, path, body) {
 export const api = {
   token:       ()             => req('GET', '/token'),
   nodes:       ()             => req('GET', '/nodes'),
+  agents:      ()             => req('GET', '/agents'),
+  createAgentInstall: (data)  => req('POST', '/agents/install-token', data),
+  updateAgentDesired: (id, data) => req('PATCH', `/agents/${id}/desired`, data),
   addNode:     (n)            => req('POST', '/nodes', n),
   delNode:     (id)           => req('DELETE', `/nodes/${id}`),
   tcpCheck:    (host, port)   => req('POST', `/nodes/tcp-check?host=${host}&port=${port}`),

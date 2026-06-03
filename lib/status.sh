@@ -110,6 +110,20 @@ status_main() {
         echo -e "  状态:     ${RED}● 未运行${NC}"
     fi
 
+    # ── Dashboard ── (full mode only)
+    echo ""
+    echo -e "${CYAN}── Web 控制台 ─────────────────────────${NC}"
+    if systemctl is-active sub-box-dashboard &>/dev/null; then
+        echo -e "  状态:     ${GREEN}● 运行中${NC}"
+    else
+        echo -e "  状态:     ${RED}● 未运行${NC}"
+    fi
+    if [[ -f "$SUB_BOX_DIR/.dashboard-token" ]]; then
+        echo "  Token:    $SUB_BOX_DIR/.dashboard-token"
+    else
+        echo -e "  Token:    ${YELLOW}未生成${NC}"
+    fi
+
     # ── 节点 ── (full mode only)
     echo ""
     echo -e "${CYAN}── 节点 ──────────────────────────────${NC}"

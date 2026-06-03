@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { api, setToken, getToken } from './api.js'
 import Dashboard from './components/Dashboard.vue'
+import Agents from './components/Agents.vue'
 import Nodes from './components/Nodes.vue'
 import Airport from './components/Airport.vue'
 
@@ -13,11 +14,7 @@ const tokInput = ref('')
 async function tryAuth() {
   loading.value = true
   try {
-    if (!getToken()) {
-      const r = await fetch('/api/token')
-      const d = await r.json()
-      setToken(d.token)
-    }
+    if (!getToken()) throw new Error('missing token')
     await api.system()
     authed.value = true
   } catch (e) {
@@ -40,12 +37,12 @@ onMounted(tryAuth)
 
   <div v-else-if="!authed" class="auth-box">
     <h2>sub-box Dashboard</h2>
-    <p>Token: <code>{{ getToken() ? getToken().slice(0,12)+'...' : 'generated' }}</code></p>
+    <p>Token: <code>{{ getToken() ? getToken().slice(0,12)+'...' : 'required' }}</code></p>
     <div class="auth-form">
       <input v-model="tokInput" :placeholder="getToken()" />
       <button @click="saveToken">Connect</button>
     </div>
-    <p class="hint">Token is auto-generated. Copy from server or paste a new one.</p>
+    <p class="hint">Token is stored on the server in /opt/subscribe/.dashboard-token.</p>
   </div>
 
   <div v-else class="app">
@@ -53,12 +50,14 @@ onMounted(tryAuth)
       <h1>sub-box</h1>
       <nav>
         <button :class="{ active: tab === 'dashboard' }" @click="tab = 'dashboard'">Dashboard</button>
+        <button :class="{ active: tab === 'agents' }"    @click="tab = 'agents'">Agents</button>
         <button :class="{ active: tab === 'nodes' }"     @click="tab = 'nodes'">Nodes</button>
         <button :class="{ active: tab === 'airport' }"   @click="tab = 'airport'">Airport</button>
       </nav>
     </header>
     <main>
       <Dashboard v-if="tab === 'dashboard'" />
+      <Agents    v-if="tab === 'agents'"    />
       <Nodes     v-if="tab === 'nodes'"     />
       <Airport   v-if="tab === 'airport'"   />
     </main>

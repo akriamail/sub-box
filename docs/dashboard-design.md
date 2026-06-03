@@ -1,281 +1,279 @@
-# sub-box Web 控制台 — 设计草案
+# sub-box Web 控制台设计
 
-> 2026-06-02
+> v2 / 2026-06-03
 
 ## 定位
 
-一个 Web 控制台替代 Manager CLI，server 端（hk2）部署，统一管理所有 proxy 节点、机场订阅、证书、流量。
+Web 控制台替代大部分 Manager CLI 日常操作。server 端统一管理自建节点、agent 节点、机场订阅、系统状态、证书周期和订阅输出。
 
-```
-浏览器 https://hk2.changuoo.com:8080/admin/
-   │
-   ├── 仪表盘（总览）
-   ├── 代理节点管理（增删改查 + 一键安装链接）
-   ├── 机场管理（测速选点 + 节点预览）
-   ├── 订阅管理（Token + 链接 + 节点预览）
-   └── 系统（证书 / 流量 / 日志）
-```
-
-## 架构选型
-
-| 层 | 方案 | 理由 |
-|------|------|------|
-| 后端 | Python FastAPI + uvicorn | 与 monitoring-center 同栈，cluster 运维经验复用 |
-| 前端 | Vue 3 + Vite SPA | 与 monitoring-center 同技术栈 |
-| 通信 | REST + Server-Sent Events (SSE) | SSE 比 WebSocket 轻量，nginx 原生支持 |
-| 部署 | systemd + Nginx reverse proxy | 与 Trojan/update.sh 同一台机器 |
-
-### 为什么不用 shell CGI
-
-- shell 处理 JSON / 并发请求太痛苦
-- 仪表盘需要聚合多来源数据（多台 proxy + 机场 API），Python 天然优势
-- 后续可复用 monitoring-center 的图表组件
-
-## 一、API 设计
-
-### 1.1 认证
-
-`X-Dashboard-Token: <32 hex>` — 与订阅 Token 独立，存在 `/opt/subscribe/.dashboard-token`
-
-### 1.2 代理节点
-
-```
-GET    /api/nodes              → 所有节点列表（自建 + 机场 + 已登记）
-POST   /api/nodes              → 手动添加节点
-PUT    /api/nodes/<id>         → 修改端口/密码/协议
-DELETE /api/nodes/<id>         → 删除节点
-POST   /api/nodes/<id>/speed   → 单节点测速
+```text
+浏览器 https://subbox.server.akria.net/
+   |
+   |-- Dashboard  总览、系统、证书、订阅概览
+   |-- Nodes      手动节点增删、TCP 测速
+   |-- Agents     一键安装、心跳、配置下发、metrics
+   |-- Airport    机场全量扫描、测速、选点
 ```
 
-### 1.3 已登记 Proxy 客户端
+## 架构
 
-```
-GET    /api/agents             → 已登记 proxy 列表 + 最后心跳
-GET    /api/agents/<hostname>  → 单台详情
-POST   /api/agents/<hostname>/push-config  → 推送配置变更到 proxy
-GET    /api/agents/<hostname>/install.sh   → 生成一键安装脚本
-```
+| 层 | 方案 | 当前状态 |
+|---|---|---|
+| 后端 | Python FastAPI 单文件 `bin/dashboard.py` | 已实现 P1/P2 原型 |
+| 前端 | Vue 3 + Vite SPA | 已实现 Dashboard / Nodes / Agents / Airport |
+| 部署 | Nginx reverse proxy + Python 进程 | systemd 裸机可用，Pod 测试可 nohup |
+| agent | Python daemon `bin/agent.py` | 已打通登记、拉取、上报 |
+| 二进制分发 | server 托管固定版本 sing-box | `bin/prepare_artifacts.sh` 已实现 |
 
-### 1.4 机场管理
+## 认证
 
-```
-GET    /api/airport/nodes      → 全部机场节点（按地区/延迟排序）
-GET    /api/airport/test       → 全量 TCP 测速
-POST   /api/airport/select     → 选中 N 个节点写入 extend.ini
-PUT    /api/airport/settings   → 修改 URL / 地区 / 最大节点数
-```
+Dashboard API 使用：
 
-### 1.5 订阅
-
-```
-GET    /api/subscription       → 当前订阅链接 + Token
-POST   /api/subscription/rotate-token → 重新生成 Token
-GET    /api/subscription/preview     → 订阅文件预览（解码后）
+```text
+X-Dashboard-Token: <token>
 ```
 
-### 1.6 系统
+token 存储在：
 
-```
-GET    /api/system/status      → sing-box/Nginx/证书/磁盘/内存
-GET    /api/system/cert        → 证书域名 + 过期时间
-GET    /api/system/traffic     → sing-box 流量统计（如有）
+```text
+/opt/subscribe/.dashboard-token
 ```
 
-### 1.7 一键安装链接
+前端不再通过公开 `/api/token` 自动拿 token。首次访问需要手动粘贴 token，避免浏览器打开即暴露管理权限。
 
-```
-GET /install/<token>
-```
+## API
 
-响应：shell 脚本，内容为 `curl ... | bash` 风格，自动填写 server 地址、登记 token、默认配置。proxy 主机只需：
+### Dashboard 与系统
 
-```bash
-curl -fsSL https://hk2.changuoo.com:8080/install/<token> | bash
-```
-
-## 二、前端页面
-
-### 2.1 仪表盘
-
-```
-┌──────────────────────────────────────────────────────┐
-│  sub-box 控制台                        [刷新] [设置] │
-├────────────┬────────────┬────────────┬───────────────┤
-│ 代理节点   │ 机场节点   │ 订阅链接   │ 系统健康      │
-│  5 在线    │ 15 可选    │ 有效       │ 证书 87 天    │
-│  0 离线    │ 2 已启用   │ 已用 3 月  │ sing-box ✅   │
-├────────────┴────────────┴────────────┴───────────────┤
-│                                                      │
-│  代理节点拓扑图                                       │
-│  ┌─ hk (Hysteria2 :443 UDP) ──── 在线 12h ──┐       │
-│  ├─ lax (Trojan :443 TCP) ────── 在线 12h ──┤       │
-│  └─ (未登记) ─── 等待新节点加入 ─────────────┘       │
-│                                                      │
-│  机场节点延迟分布                                     │
-│  台湾 ████ 109ms   日本 ██ 61ms                      │
-│  香港 ██████ 45ms  新加坡 ███ 80ms                   │
-│                                                      │
-│  最近事件                                            │
-│  12:00  lax 心跳正常                                  │
-│  11:55  订阅文件已更新 (6 节点)                       │
-│  03:00  机场抓取完成 (选中 台湾1/日本1)               │
-└──────────────────────────────────────────────────────┘
+```text
+GET /api/dashboard
+GET /api/system/status
+GET /api/system/cert
+GET /api/subscription
 ```
 
-### 2.2 代理节点
+用途：
 
-```
-┌──────────────────────────────────────────────────────┐
-│  代理节点管理                           [+ 添加节点] │
-│                                                      │
-│  ┌─ 已登记 ──────────────────────────────────────┐  │
-│  │ hk      Hysteria2 :443   在线 12h    [改] [删] │  │
-│  │ lax     Trojan :443      在线 12h    [改] [删] │  │
-│  └────────────────────────────────────────────────┘  │
-│                                                      │
-│  ┌─ 手动 ────────────────────────────────────────┐  │
-│  │ 自建.HK │ trojan://...   [改] [删]            │  │
-│  │ 自建.LAX│ trojan://...   [改] [删]            │  │
-│  └────────────────────────────────────────────────┘  │
-│                                                      │
-│  [ 生成一键安装链接 ]                                 │
-│  bash <(curl -fsSL https://hk2.../install/xxx)        │
-└──────────────────────────────────────────────────────┘
+- 展示 sing-box、Nginx、Dashboard 状态。
+- 展示 CPU、内存、磁盘。
+- 展示证书剩余天数。
+- 展示订阅 token、订阅链接和节点数量。
+
+### 手动节点
+
+```text
+GET    /api/nodes
+POST   /api/nodes
+DELETE /api/nodes/{id}
+POST   /api/nodes/{id}/speed
 ```
 
-### 2.3 机场管理
+节点写入 `config.ini`，删除采用局部删除逻辑，避免重写整个 `[nodes]` 段导致用户注释或其它配置被误伤。
 
-```
-┌──────────────────────────────────────────────────────┐
-│  机场管理                               [刷新测速]   │
-│                                                      │
-│  订阅源: liangxin.xyz       到期: 2026-10-28         │
-│  流量: 998.99 GB / 剩余 27 天                         │
-│                                                      │
-│  地区     节点数    已启用   选中延迟                  │
-│  ───────────────────────────────────────             │
-│  台湾      2         1        109ms [改] [测速]      │
-│  日本      15        1        61ms  [改] [测速]      │
-│  香港      10        0        -     [+启用]          │
-│  新加坡    9         0        -     [+启用]          │
-│  韩国      2         0        -     [+启用]          │
-│                                                      │
-│  [ 应用更改 → 重新生成订阅 ]                          │
-└──────────────────────────────────────────────────────┘
+### Agent 控制面
+
+```text
+GET   /api/agents
+POST  /api/agents/install-token
+GET   /install/{token}
+POST  /api/agents/enroll
+GET   /api/agents/config
+POST  /api/agents/report
+PATCH /api/agents/{id}/desired
 ```
 
-### 2.4 一键安装向导
+能力：
 
-```
-┌──────────────────────────────────────────────────────┐
-│  一键安装链接                                         │
-│                                                      │
-│  1. 选择协议: [Trojan ▾]                              │
-│  2. 端口:     [443]                                   │
-│  3. 密码:     [自动生成] 🔄                           │
-│  4. 节点备注: [自建.XXX]                              │
-│                                                      │
-│  5. 有效时间:  [1小时 ▾]                              │
-│                                                      │
-│  ┌──────────────────────────────────────────────┐    │
-│  │ curl -fsSL https://hk2.../install/abc123 \   │    │
-│  │   | bash                                     │    │
-│  └──────────────────────────────────────────────┘    │
-│  [📋 复制]  [重新生成]                                │
-└──────────────────────────────────────────────────────┘
+- Dashboard 生成一键安装命令。
+- agent 用一次性 token 登记。
+- agent 周期拉取 desired config。
+- agent 上报 CPU、内存、磁盘、网络速率、证书周期、sing-box 状态。
+- server 自动生成 `state/agent_nodes.ini` 并进入订阅合成。
+
+### 机场
+
+```text
+GET  /api/airport/nodes
+POST /api/airport/test
+POST /api/airport/select
 ```
 
-## 三、Server 部署
+能力：
 
-### 3.1 目录结构
+- 拉取机场订阅。
+- 解码节点。
+- 执行 TCP 测速。
+- 按地区选点写入 `extend.ini`。
 
+### 安装制品
+
+```text
+GET /artifacts/sing-box/linux/amd64
+GET /artifacts/sing-box/linux/arm64
+GET /artifacts/sha256sums.txt
 ```
+
+agent 安装时从 server 下载固定版本 sing-box，不直接访问 GitHub。
+
+## 前端页面
+
+### Dashboard
+
+显示：
+
+- 系统健康：CPU、内存、磁盘。
+- 服务状态：sing-box、Nginx、Dashboard。
+- 证书剩余天数。
+- 订阅链接与节点数量。
+- 当前模式和主要配置。
+
+### Nodes
+
+显示：
+
+- `config.ini` 手动节点。
+- `extend.ini` 机场节点。
+- `state/agent_nodes.ini` agent 节点。
+- 节点增删和 TCP 测速。
+
+### Agents
+
+显示：
+
+- 生成安装命令。
+- 已登记 agent 列表。
+- 在线/离线、最后心跳、应用状态。
+- CPU、内存、磁盘、网络 rx/tx bps。
+- 证书剩余天数、sing-box 状态。
+
+后续要补：
+
+- desired config 表单化编辑。
+- agent token rotate。
+- install token 过期时间。
+- 操作审计日志。
+
+### Airport
+
+显示：
+
+- 机场订阅节点。
+- 地区统计。
+- TCP 延迟。
+- 选点写入 `extend.ini`。
+
+## 部署
+
+### 目录结构
+
+```text
 /opt/subscribe/
-├── manager.sh
-├── bin/
-│   ├── sub-box.sh
-│   ├── update.sh
-│   ├── fetch_ext.sh
-│   ├── refresh_clients.sh
-│   ├── handle_enroll.sh     ← 新增：登记请求处理（未来阶段）
-│   └── dashboard.py         ← 新增：FastAPI 后端单文件
-├── web/                     ← 新增：前端静态文件
-│   ├── index.html
-│   ├── assets/
-│   └── ...
-└── ...
+|-- bin/
+|   |-- dashboard.py
+|   |-- agent.py
+|   |-- prepare_artifacts.sh
+|   |-- update.sh
+|-- lib/
+|   |-- install.sh
+|   |-- status.sh
+|   |-- uninstall.sh
+|-- web/
+|   |-- index.html
+|   |-- assets/
+|-- state/
+|   |-- agents.json
+|   |-- install_tokens.json
+|   |-- agent_nodes.ini
+|-- artifacts/
+|   |-- sing-box-linux-amd64
+|   |-- sing-box-linux-arm64
+|   |-- sha256sums.txt
 ```
 
-### 3.2 systemd 服务
-
-```ini
-# /etc/systemd/system/sub-box-dashboard.service
-[Unit]
-Description=sub-box dashboard
-After=network.target
-
-[Service]
-User=root
-WorkingDirectory=/opt/subscribe
-ExecStart=/usr/bin/python3 bin/dashboard.py
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 3.3 Nginx 路由
+### Nginx 路由
 
 ```nginx
-# /admin/ 和 /api/ → dashboard (127.0.0.1:9190)
-location /admin/ {
-    auth_basic "sub-box admin";
-    auth_basic_user_file /opt/subscribe/web.htpasswd;
-    proxy_pass http://127.0.0.1:9190;
+location / {
+    root /opt/subscribe/web;
+    try_files $uri $uri/ /index.html;
 }
+
 location /api/ {
     proxy_pass http://127.0.0.1:9190;
 }
-# /install/<token> → dashboard 生成安装脚本
+
 location /install/ {
     proxy_pass http://127.0.0.1:9190;
 }
-# /clients/ 和订阅 token 路径保持不变
+
+location /artifacts/ {
+    proxy_pass http://127.0.0.1:9190;
+}
 ```
 
-## 四、实现阶段
+反代时需要保留 `X-Forwarded-Proto` 和 `Host`，安装命令才能生成正确的公网 URL。
 
-| 阶段 | 内容 | 预估 |
-|------|------|------|
-| **P1 核心** | FastAPI 单文件后端 + 节点 CRUD + 机场测速 + SSE 状态 | 3-4 天 |
-| **P1 核心** | Vue 前端 SPA（仪表盘 + 节点 + 机场3个页面） | 2-3 天 |
-| **P2 增强** | 一键安装链接生成 + 登记流程对接 | 1-2 天 |
-| **P2 增强** | 流量统计 + 图表 + 事件日志 | 1-2 天 |
-| **P3 完善** | proxy 远程推送配置 + 心跳监控 | 2-3 天 |
-| **P3 完善** | 多用户 + 权限 | 1 天 |
+## 状态文件
 
-## 五、Prod 集群测试
-
-```
-┌─ prod k3s ─────────────────────────────┐
-│                                         │
-│  server pod (ubuntu:22.04)              │
-│  ├─ sing-box (full)                     │
-│  ├─ Nginx :8080                         │
-│  ├─ dashboard :9190                     │
-│  └─ NodePort :30808 → :8080             │
-│                                         │
-│  proxy pod × 2 (ubuntu:22.04)           │
-│  ├─ sing-box (proxy)                    │
-│  └─ 通过 server 一键安装                │
-│                                         │
-└─────────────────────────────────────────┘
+```text
+/opt/subscribe/.dashboard-token
+/opt/subscribe/state/agents.json
+/opt/subscribe/state/install_tokens.json
+/opt/subscribe/state/agent_nodes.ini
+/opt/subscribe/artifacts/
 ```
 
-## 六、关键决策待确认
+这些路径均已加入 `.gitignore`。
 
-1. **前端框架**：Vue 3（与 monitoring-center 同栈）还是更轻量的 vanilla JS + HTMX？
-2. **dashboard.py**：单文件还是拆成 `web/` 模块？
-3. **一键安装**：是通过 token 即时生成脚本，还是预生成写入文件？
-4. **cluster 部署**：dashboard 是否最终要跑在 prod k3s 集群里（而不是 hk2 裸机）？
+## 实现状态
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| P1 | FastAPI Dashboard 基础 API | 已完成 |
+| P1 | Vue Dashboard / Nodes / Airport | 已完成 |
+| P1 | 机场测速选点 | 已完成 |
+| P2 | 一键安装 token 与 `/install/{token}` | 已完成原型 |
+| P2 | agent 登记、拉取 desired config、上报 metrics | 已完成原型 |
+| P2 | server 托管 sing-box 制品 | 已完成 |
+| P2 | 订阅合成读入 agent 节点 | 已完成 |
+| P3 | desired config 完整表单编辑 | 待做 |
+| P3 | 审计日志、token rotate、权限模型 | 待做 |
+| P3 | 真实 VPS systemd 端到端验证 | 待做 |
+
+## 测试环境
+
+prod k3s 的 `subbox-test` namespace：
+
+```text
+subbox-server  Ubuntu 22.04 Pod
+subbox-worker  Ubuntu 22.04 Pod
+```
+
+已验证：
+
+- Dashboard 可通过 `https://subbox.server.akria.net/` 访问。
+- server 可生成安装命令。
+- worker 可执行安装脚本并登记。
+- worker 可从 server `/artifacts/` 下载 sing-box。
+- worker report 包含 CPU、内存、磁盘、网络速率、证书、sing-box 状态。
+- server 生成 `state/agent_nodes.ini`，订阅解码包含 agent 节点。
+
+限制：
+
+- Ubuntu Pod 不是 systemd init，Dashboard 和 agent 在测试中用 nohup/直接进程方式运行。
+- 真实 VPS 仍需验证 systemd service 自启动、重启恢复、证书探测和端口变更。
+
+## 设计判断
+
+这个设计的关键价值是把“安装”和“长期控制”分开：
+
+- 安装只需要一次性 token。
+- 长期控制依赖 agent token 和 desired state。
+- agent 主动拉取，server 不持有 SSH 权限。
+- sing-box 版本由 server 固定分发，减少外网依赖和版本漂移。
+
+当前多余或暂缓的部分：
+
+- 复杂多用户权限先不做，Dashboard token 足够支撑单人运维。
+- SSE/实时事件先不做，轮询足够支撑 P2。
+- 远程 shell 执行先不做，避免把系统变成隐形 SSH 面板。
