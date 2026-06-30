@@ -223,7 +223,7 @@ install_main() {
             info "使用现有证书"
         else
             ~/.acme.sh/acme.sh --issue --server letsencrypt -d "$domain" -w "$acme_webroot" --force
-            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" --ecc \
                 --fullchain-file "$cert_dir/fullchain.pem" \
                 --key-file "$cert_dir/privkey.pem"
         fi
@@ -231,7 +231,7 @@ install_main() {
         info "正在申请证书..."
         ~/.acme.sh/acme.sh --issue --server letsencrypt -d "$domain" -w "$acme_webroot"
         if [[ $? -eq 0 ]]; then
-            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" --ecc \
                 --fullchain-file "$cert_dir/fullchain.pem" \
                 --key-file "$cert_dir/privkey.pem"
         else
@@ -1270,8 +1270,8 @@ install_proxy_main() {
     if [[ -f "$cert_dir/fullchain.pem" ]]; then
         info "证书已存在: $cert_dir"
         if confirm "是否重新申请？"; then
-            ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force
-            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+            ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --server letsencrypt --force
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" --ecc \
                 --fullchain-file "$cert_dir/fullchain.pem" \
                 --key-file "$cert_dir/privkey.pem"
         else
@@ -1279,9 +1279,9 @@ install_proxy_main() {
         fi
     else
         info "正在申请证书 (standalone 模式)..."
-        ~/.acme.sh/acme.sh --issue -d "$domain" --standalone
+        ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --server letsencrypt
         if [[ $? -eq 0 ]]; then
-            ~/.acme.sh/acme.sh --install-cert -d "$domain" \
+            ~/.acme.sh/acme.sh --install-cert -d "$domain" --ecc \
                 --fullchain-file "$cert_dir/fullchain.pem" \
                 --key-file "$cert_dir/privkey.pem"
         else
